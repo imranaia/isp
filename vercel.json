@@ -1,0 +1,12 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "outputDirectory": "public",
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": "/api" },
+    { "source": "/login", "destination": "/login.html" },
+    { "source": "/dashboard", "destination": "/app.html" }
+  ],
+  "functions": {
+    "api/index.js": { "maxDuration": 60 }
+  }
+}

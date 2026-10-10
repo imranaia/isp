@@ -10,3 +10,6 @@ node_modules/
 # Original photo files (copies used by the site are in public/img)
 /*.jpeg
 /*.jpg
+
+.vercel
+.env*

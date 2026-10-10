@@ -435,15 +435,34 @@ function pickImage(onDone) {
   picker.click();
 }
 
+// Large photos are resized in the browser (longest side 1800px) so uploads stay small and fast.
+async function shrinkImage(file) {
+  const asDataUrl = (blob) =>
+    new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.readAsDataURL(blob);
+    });
+  if (file.type === "image/svg+xml" || file.size < 900_000) return asDataUrl(file);
+  try {
+    const bitmap = await createImageBitmap(file);
+    const scale = Math.min(1, 1800 / Math.max(bitmap.width, bitmap.height));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.round(bitmap.width * scale);
+    canvas.height = Math.round(bitmap.height * scale);
+    canvas.getContext("2d").drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    const type = file.type === "image/png" ? "image/png" : "image/jpeg";
+    return canvas.toDataURL(type, 0.85);
+  } catch {
+    return asDataUrl(file);
+  }
+}
+
 picker.addEventListener("change", async () => {
   const file = picker.files[0];
   if (!file || !pickTarget) return;
   setStatus("Uploading picture…");
-  const dataUrl = await new Promise((resolve) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
-    reader.readAsDataURL(file);
-  });
+  const dataUrl = await shrinkImage(file);
   const res = await fetch("/api/upload", {
     method: "POST",
     headers: { "Content-Type": "application/json" },

@@ -148,55 +148,110 @@ function route() {
 
 // ---------- dashboard ----------
 
+// Each role gets its own dashboard: a welcome banner with their area and shortcuts,
+// the counts that matter at their level, and their people broken down by the level below.
+const DASHBOARD_INTRO = {
+  super_admin: "You control the whole platform: the landing page, locations, every agent and every record.",
+  lga_agent: "You are in charge of this local government. Add ward agents, polling unit agents and supporters.",
+  ward_agent: "You are in charge of this ward. Add polling unit agents and supporters.",
+  pu_agent: "You are in charge of this polling unit. Add the people who will vote for Haske.",
+};
+
 async function showDashboard() {
-  setHeader("Dashboard", `Welcome, ${state.user.full_name}. Area: ${scopeText(state.user)}`);
+  const me = state.user;
+  const role = me.role;
+  setHeader("Dashboard", `${ROLE_LABEL[role]} · ${scopeText(me)}`);
   view.innerHTML = `<div class="empty">Loading…</div>`;
   const s = await api("/api/stats");
-  const role = state.user.role;
-  const cards = [
-    { label: "Total Agents", value: s.totalAgents, note: "All agent levels", feature: true, show: role !== "pu_agent" },
-    { label: "LGA Agents", value: s.lgaAgents, note: "In charge of a local government", show: role === "super_admin" },
-    { label: "Ward Agents", value: s.wardAgents, note: "In charge of a ward", show: ["super_admin", "lga_agent"].includes(role) },
-    { label: "Polling Unit Agents", value: s.puAgents, note: "In charge of a polling unit", show: role !== "pu_agent" },
-    { label: "Supporters", value: s.supporters, note: "People who will vote", feature: role === "pu_agent", show: true },
-    { label: "Verified Cards", value: s.verified, note: "Checked against the voter register", show: true },
-  ].filter((c) => c.show);
 
-  const max = Math.max(1, ...s.byLga.map((r) => r.n));
+  const cards = {
+    super_admin: [
+      { label: "Total Agents", value: s.totalAgents, note: "All agent levels", feature: true },
+      { label: "LGA Agents", value: s.lgaAgents, note: "In charge of a local government" },
+      { label: "Ward Agents", value: s.wardAgents, note: "In charge of a ward" },
+      { label: "Polling Unit Agents", value: s.puAgents, note: "In charge of a polling unit" },
+      { label: "Supporters", value: s.supporters, note: "People who will vote" },
+      { label: "Verified Cards", value: s.verified, note: "Checked against the voter register" },
+    ],
+    lga_agent: [
+      { label: "Agents under you", value: s.totalAgents, note: `In ${me.assign_lga}`, feature: true },
+      { label: "Ward Agents", value: s.wardAgents, note: "In charge of a ward" },
+      { label: "Polling Unit Agents", value: s.puAgents, note: "In charge of a polling unit" },
+      { label: "Supporters", value: s.supporters, note: `Across ${me.assign_lga}` },
+      { label: "Added this week", value: s.thisWeek, note: "New supporters, last 7 days" },
+      { label: "Verified Cards", value: s.verified, note: "Checked against the voter register" },
+    ],
+    ward_agent: [
+      { label: "Polling Unit Agents", value: s.puAgents, note: `In ${me.assign_ward}`, feature: true },
+      { label: "Supporters", value: s.supporters, note: `Across ${me.assign_ward}` },
+      { label: "Added this week", value: s.thisWeek, note: "New supporters, last 7 days" },
+      { label: "Verified Cards", value: s.verified, note: "Checked against the voter register" },
+    ],
+    pu_agent: [
+      { label: "My Supporters", value: s.supporters, note: me.assign_pu, feature: true },
+      { label: "Added this week", value: s.thisWeek, note: "New supporters, last 7 days" },
+      { label: "Verified Cards", value: s.verified, note: "Checked against the voter register" },
+    ],
+  }[role];
+
+  const quick = [
+    `<a class="btn btn-gold" href="#verify">✓ Verify a voter's card</a>`,
+    state.canAdd.includes("supporter") ? `<button class="btn btn-outline" data-quick-add="supporter">+ Add supporter</button>` : "",
+    role === "super_admin" ? `<a class="btn btn-outline" href="#locations">⌖ Locations</a>` : "",
+    role !== "super_admin" ? `<button class="btn btn-outline" id="myTemplate">⬇ My Excel template</button>` : "",
+  ].join("");
+
+  const max = Math.max(1, ...s.breakdown.map((r) => r.n));
+  const breakdownCard =
+    role === "pu_agent"
+      ? ""
+      : `<div class="card">
+          <div class="card-head"><h2>People by ${esc(s.breakdownLabel)}</h2></div>
+          ${
+            s.breakdown.length
+              ? `<div class="bars">${s.breakdown
+                  .map(
+                    (r) =>
+                      `<div class="bar-row"><span title="${esc(r.name)}">${esc(r.name)}</span><div class="bar-track"><div class="bar-fill" style="width:0" data-w="${(r.n / max) * 100}"></div></div><b>${r.n}</b></div>`
+                  )
+                  .join("")}</div>`
+              : `<div class="empty">No one has been added yet.</div>`
+          }
+        </div>`;
+
   view.innerHTML = `
+    <div class="welcome">
+      <div>
+        <small>${ROLE_LABEL[role]}</small>
+        <h2>Welcome, ${esc(me.full_name)}</h2>
+        <p>${esc(scopeText(me))} · ${esc(DASHBOARD_INTRO[role])}</p>
+      </div>
+      <div class="quick">${quick}</div>
+    </div>
     <div class="stats">
       ${cards
-        .map(
-          (c) => `<div class="stat ${c.feature ? "feature" : ""}"><span>${c.label}</span><strong data-count="${c.value}">0</strong><small>${c.note}</small></div>`
-        )
+        .map((c) => `<div class="stat ${c.feature ? "feature" : ""}"><span>${c.label}</span><strong data-count="${c.value}">0</strong><small>${esc(c.note || "")}</small></div>`)
         .join("")}
     </div>
-    <div class="two-col">
+    <div class="${role === "pu_agent" ? "" : "two-col"}">
+      ${breakdownCard}
       <div class="card">
-        <div class="card-head"><h2>People by local government</h2></div>
-        ${
-          s.byLga.length
-            ? `<div class="bars">${s.byLga
-                .map(
-                  (r) => `<div class="bar-row"><span>${esc(r.lga)}</span><div class="bar-track"><div class="bar-fill" style="width:0" data-w="${(r.n / max) * 100}"></div></div><b>${r.n}</b></div>`
-                )
-                .join("")}</div>`
-            : `<div class="empty">No one has been added yet.</div>`
-        }
-      </div>
-      <div class="card">
-        <div class="card-head"><h2>Recently added</h2><a class="btn btn-outline btn-small" href="#${role === "pu_agent" ? "supporter" : "all"}">View all</a></div>
+        <div class="card-head"><h2>${role === "pu_agent" ? "My latest supporters" : "Recently added"}</h2><a class="btn btn-outline btn-small" href="#${role === "pu_agent" ? "supporter" : "all"}">View all</a></div>
         ${
           s.recent.length
-            ? `<div class="table-wrap"><table><thead><tr><th>Name</th><th>Role</th><th>Area</th></tr></thead><tbody>${s.recent
+            ? `<div class="table-wrap"><table><thead><tr><th>Name</th><th>Role</th><th>${role === "pu_agent" ? "Polling unit" : "Area"}</th><th>Added</th></tr></thead><tbody>${s.recent
                 .map(
-                  (p) => `<tr><td>${esc(p.full_name)}</td><td><span class="pill pill-${p.role}">${ROLE_LABEL[p.role]}</span></td><td>${esc(areaText(p) || p.lga || "—")}</td></tr>`
+                  (p) =>
+                    `<tr><td>${esc(p.full_name)}</td><td><span class="pill pill-${p.role}">${ROLE_LABEL[p.role]}</span></td><td>${esc(areaText(p) || p.lga || "—")}</td><td>${esc((p.created_at || "").slice(0, 10))}</td></tr>`
                 )
                 .join("")}</tbody></table></div>`
-            : `<div class="empty">Start by adding agents or verifying a voter's card.</div>`
+            : `<div class="empty">${role === "pu_agent" ? "Add your first supporter to get started." : "Start by adding agents or verifying a voter's card."}</div>`
         }
       </div>
     </div>`;
+
+  view.querySelector("[data-quick-add]")?.addEventListener("click", () => openPersonModal("supporter"));
+  document.getElementById("myTemplate")?.addEventListener("click", () => downloadTemplateFor(me.id));
 
   // Count-up numbers and grow the bars.
   view.querySelectorAll("[data-count]").forEach((el) => {
@@ -432,7 +487,7 @@ async function loadTable() {
       b.addEventListener("click", async () => {
         const password = await ask({
           title: `New password for ${b.dataset.name}`,
-          text: "At least 6 characters. Give it to the agent.",
+          text: "At least 4 characters. Give it to the agent.",
           okText: "Set password",
           input: { type: "text", placeholder: "New password" },
         });
@@ -876,8 +931,8 @@ function showAccount() {
     <form class="card" style="max-width:640px" id="pwForm">
       <div class="card-head"><h2>Change password</h2></div>
       <div class="grid-2">
-        <label>New password<input type="password" id="pw1" minlength="6" autocomplete="new-password" required></label>
-        <label>Repeat new password<input type="password" id="pw2" minlength="6" autocomplete="new-password" required></label>
+        <label>New password<input type="password" id="pw1" minlength="4" autocomplete="new-password" required></label>
+        <label>Repeat new password<input type="password" id="pw2" minlength="4" autocomplete="new-password" required></label>
       </div>
       <button class="btn btn-primary" style="margin-top:16px">Save password</button>
       <div id="pwMsg"></div>

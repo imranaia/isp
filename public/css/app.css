@@ -366,3 +366,25 @@ textarea:focus { outline: 2px solid var(--green-500); border-color: transparent;
   .print-box { font-size: 18px; margin-right: 6px; }
   .print-foot { margin-top: 18px; font-size: 9px; color: #666; text-align: right; }
 }
+
+/* ---------- role dashboard ---------- */
+.welcome {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 20px;
+  flex-wrap: wrap;
+  margin-bottom: 20px;
+  padding: 24px 26px;
+  border-radius: var(--radius);
+  color: #fff;
+  background:
+    radial-gradient(90% 140% at 100% 0%, rgba(217, 171, 63, 0.3), transparent 60%),
+    linear-gradient(135deg, var(--green-800), var(--green-950));
+}
+.welcome small { display: block; color: var(--gold-soft); font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; font-size: 12px; }
+.welcome h2 { font-family: var(--display); font-size: 28px; margin: 4px 0; }
+.welcome p { margin: 0; color: rgba(255, 255, 255, 0.78); }
+.quick { display: flex; gap: 10px; flex-wrap: wrap; }
+.quick .btn-outline { background: rgba(255, 255, 255, 0.08); border-color: rgba(255, 255, 255, 0.25); color: #fff; }
+.quick .btn-outline:hover { border-color: var(--gold-soft); }

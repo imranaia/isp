@@ -9,5 +9,9 @@
   },
   "engines": {
     "node": ">=22.13"
+  },
+  "dependencies": {
+    "@libsql/client": "^0.15.15",
+    "@vercel/blob": "^2.8.1"
   }
 }
