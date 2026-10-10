@@ -732,6 +732,12 @@ function serveStatic(req, res, pathname) {
 
 async function route(req, res) {
   const url = new URL(req.url, "http://localhost");
+  // On Vercel every /api/* request is rewritten to /api?__path=...; put the original path back.
+  const rewritten = url.searchParams.get("__path");
+  if (url.pathname === "/api" && rewritten !== null) {
+    url.pathname = `/api/${rewritten}`;
+    url.searchParams.delete("__path");
+  }
   const { pathname } = url;
   const method = req.method;
 
