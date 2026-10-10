@@ -71,7 +71,7 @@ function setHeader(title, sub = "", actions = "") {
   document.getElementById("pageTitle").textContent = title;
   document.getElementById("pageSub").textContent = sub;
   document.getElementById("topActions").innerHTML = actions;
-  document.title = `${title} · ISP`;
+  document.title = `${title} · Independent Structure Platform (ISP)`;
 }
 
 function areaText(p) {
