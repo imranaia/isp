@@ -1,0 +1,12 @@
+# Secrets and data: never commit
+.env
+.env.*
+!.env.example
+data/
+public/uploads/
+node_modules/
+.vercel
+
+# Original photo files (copies used by the site are in public/img)
+/*.jpeg
+/*.jpg

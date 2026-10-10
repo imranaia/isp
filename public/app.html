@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dashboard · Independent Structure Platform</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,700&family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="icon" href="/img/isp-logo.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/css/app.css">
+  <script src="/js/isp-logo.js"></script>
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar" id="sidebar">
+      <a class="side-brand" href="/" target="_blank" rel="noopener">
+        <span class="side-logo" data-isp-logo></span>
+        <span><strong>ISP</strong><small>Independent Structure Platform</small></span>
+      </a>
+      <nav class="side-nav" id="sideNav"></nav>
+      <div class="side-user">
+        <div>
+          <strong id="userName"></strong>
+          <small id="userRole"></small>
+        </div>
+        <button type="button" class="link-btn" id="logout">Sign out</button>
+      </div>
+    </aside>
+
+    <div class="main">
+      <header class="topbar">
+        <button type="button" class="menu-btn" id="menuBtn" aria-label="Open menu">☰</button>
+        <div>
+          <h1 id="pageTitle">Dashboard</h1>
+          <p id="pageSub" class="muted"></p>
+        </div>
+        <div class="topbar-actions" id="topActions"></div>
+      </header>
+      <section class="content" id="view"></section>
+    </div>
+  </div>
+
+  <!-- Add person -->
+  <div class="modal" id="personModal" hidden>
+    <form class="modal-card" id="personForm" novalidate>
+      <header class="modal-head">
+        <h2 id="personTitle">Add person</h2>
+        <button type="button" class="icon-btn" data-close aria-label="Close">✕</button>
+      </header>
+      <div class="modal-body">
+        <fieldset>
+          <legend>Voter's card</legend>
+          <div class="vin-row">
+            <input name="vin" id="pVin" placeholder="VIN, 19 letters and numbers" maxlength="23" autocomplete="off">
+            <button type="button" class="btn btn-outline" id="fetchVin">Fetch details</button>
+          </div>
+          <p class="hint" id="vinHint">Enter the VIN and click Fetch details to fill the form from the voter's card.</p>
+        </fieldset>
+
+        <fieldset>
+          <legend>Personal details</legend>
+          <div class="grid-2">
+            <label class="span-2">Full name<input name="full_name" required></label>
+            <label>Gender<input name="gender"></label>
+            <label>Date of birth<input name="date_of_birth"></label>
+            <label>Phone<input name="phone" inputmode="tel"></label>
+            <label>Occupation<input name="occupation"></label>
+            <label class="span-2">Address<input name="address"></label>
+            <label>Local government<input name="lga"></label>
+            <label>Ward<input name="ward"></label>
+            <label>Polling unit<input name="polling_unit"></label>
+            <label>Polling unit code<input name="polling_unit_code"></label>
+          </div>
+        </fieldset>
+
+        <fieldset id="assignBox">
+          <legend>Area in charge of</legend>
+          <div class="grid-2">
+            <label>Local government<select name="assign_lga" id="assignLga"></select></label>
+            <label id="assignWardWrap">Ward<select name="assign_ward" id="assignWard"></select></label>
+            <label id="assignPuWrap" class="span-2">Polling unit<select name="assign_pu" id="assignPu"></select></label>
+            <p class="hint span-2" id="assignHint"></p>
+          </div>
+        </fieldset>
+
+        <fieldset id="loginBox">
+          <legend>Sign-in for this agent</legend>
+          <div class="grid-2">
+            <label>Login (phone or email)<input name="login" autocomplete="off"></label>
+            <label>Password<input name="password" type="text" autocomplete="new-password" minlength="6"></label>
+          </div>
+          <p class="hint">Give these to the agent so they can sign in and add their own people.</p>
+        </fieldset>
+        <div class="alert alert-error" id="personError" hidden></div>
+      </div>
+      <footer class="modal-foot">
+        <button type="button" class="btn btn-ghost" data-close>Cancel</button>
+        <button type="submit" class="btn btn-primary" id="personSubmit">Save</button>
+      </footer>
+    </form>
+  </div>
+
+  <!-- Confirm / message -->
+  <div class="modal" id="confirmModal" hidden>
+    <div class="modal-card modal-sm">
+      <div class="modal-body">
+        <h2 id="confirmTitle"></h2>
+        <p id="confirmText" class="muted"></p>
+        <input id="confirmInput" hidden>
+      </div>
+      <footer class="modal-foot">
+        <button type="button" class="btn btn-ghost" id="confirmNo">Cancel</button>
+        <button type="button" class="btn btn-primary" id="confirmYes">OK</button>
+      </footer>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" role="status" hidden></div>
+  <div id="printArea" class="print-area"></div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js" defer></script>
+  <script src="/js/app.js" defer></script>
+</body>
+</html>

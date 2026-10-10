@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="ISP, Independent Structure Platform">
+      <defs>
+        <linearGradient id="f-ring" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stop-color="#f6e2a6"/><stop offset=".5" stop-color="#d9ab3f"/><stop offset="1" stop-color="#9c6f1f"/>
+        </linearGradient>
+        <radialGradient id="f-core" cx=".5" cy=".35" r=".75">
+          <stop offset="0" stop-color="#0f4a31"/><stop offset="1" stop-color="#03140d"/>
+        </radialGradient>
+      </defs>
+      <polygon class="isp-hex" points="32,2 58,17 58,47 32,62 6,47 6,17" fill="url(#f-core)" stroke="url(#f-ring)" stroke-width="3" stroke-linejoin="round"/>
+      <polygon points="32,8 53,20 53,44 32,56 11,44 11,20" fill="none" stroke="rgba(240,213,140,.25)" stroke-width="1"/>
+      <g class="isp-tier isp-tier-0">
+      <polygon points="15,43 32,51.5 32,54.7 15,46.2" fill="#0d6b41"/>
+      <polygon points="32,51.5 49,43 49,46.2 32,54.7" fill="#0a5333"/>
+      <polygon points="15,43 32,34.5 49,43 32,51.5" fill="#138a55"/>
+    </g><g class="isp-tier isp-tier-1">
+      <polygon points="18.5,35.5 32,42.25 32,45.45 18.5,38.7" fill="#2c7a39"/>
+      <polygon points="32,42.25 45.5,35.5 45.5,38.7 32,45.45" fill="#215d2b"/>
+      <polygon points="18.5,35.5 32,28.75 45.5,35.5 32,42.25" fill="#3f9f4f"/>
+    </g><g class="isp-tier isp-tier-2">
+      <polygon points="22,28 32,33 32,36.2 22,31.2" fill="#86862a"/>
+      <polygon points="32,33 42,28 42,31.2 32,36.2" fill="#66661f"/>
+      <polygon points="22,28 32,23 42,28 32,33" fill="#a8a83c"/>
+    </g><g class="isp-tier isp-tier-3">
+      <polygon points="25.5,20.5 32,23.75 32,26.95 25.5,23.7" fill="#d9ab3f"/>
+      <polygon points="32,23.75 38.5,20.5 38.5,23.7 32,26.95" fill="#b8862a"/>
+      <polygon points="25.5,20.5 32,17.25 38.5,20.5 32,23.75" fill="#f0d58c"/>
+    </g>
+      <circle class="isp-spark" cx="32" cy="12.5" r="1.6" fill="#fff6d8"/>
+    </svg>

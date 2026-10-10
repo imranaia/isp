@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Haske 2027 · Independent Structure Platform</title>
+  <meta name="description" content="Abdurrahman Bashir Haske, APM candidate for Governor of Adamawa State. The ADAMAWA First Agenda.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700;9..144,800&family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="icon" href="/img/isp-logo.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/css/landing.css">
+  <script src="/js/isp-logo.js"></script>
+  <script type="importmap">
+    { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
+  </script>
+</head>
+<body>
+  <!-- Shown only when the super admin opens the page in edit mode -->
+  <div class="edit-bar" id="editBar" hidden>
+    <span><strong>Editing landing page.</strong> Click any text to change it. Click a picture to replace it.</span>
+    <span class="edit-actions">
+      <span class="edit-status" id="editStatus"></span>
+      <button type="button" class="btn btn-ghost" id="editDiscard">Discard</button>
+      <button type="button" class="btn btn-gold" id="editSave">Save changes</button>
+    </span>
+  </div>
+
+  <header class="nav" id="nav">
+    <a class="nav-brand isp-brand" href="#top" aria-label="ISP, Independent Structure Platform, home">
+      <span class="isp-mark" data-isp-logo></span>
+      <span class="isp-word"><strong>ISP</strong><small>Independent Structure Platform</small></span>
+    </a>
+    <nav class="nav-links" aria-label="Sections">
+      <a href="#about">About</a>
+      <a href="#agenda">Agenda</a>
+      <a href="#deputy">Running Mate</a>
+      <a href="#gallery">Gallery</a>
+    </nav>
+    <a class="btn btn-gold btn-sm" href="/login">Get Started</a>
+  </header>
+
+  <main id="top">
+    <!-- HERO -->
+    <section class="hero" id="hero">
+      <canvas class="hero-canvas" id="heroCanvas" aria-hidden="true"></canvas>
+      <div class="hero-glow" aria-hidden="true"></div>
+      <div class="hero-inner">
+        <div class="hero-copy">
+          <p class="brand-line reveal" data-edit="hero.brandLine"></p>
+          <p class="eyebrow reveal"><span class="dot"></span><span data-edit="hero.eyebrow"></span></p>
+          <h1 class="hero-title">
+            <span class="line reveal" data-edit="hero.titleTop"></span>
+            <span class="line gold reveal" data-edit="hero.titleBottom"></span>
+          </h1>
+          <p class="hero-sub reveal" data-edit="hero.subtitle"></p>
+          <p class="hero-tagline reveal" data-edit="hero.tagline"></p>
+          <div class="hero-actions reveal">
+            <a class="btn btn-gold btn-lg" href="/login"><span data-edit="hero.cta"></span> <span aria-hidden="true">→</span></a>
+            <a class="btn btn-ghost btn-lg" href="#agenda">Read the agenda</a>
+          </div>
+        </div>
+
+        <div class="hero-visual reveal" id="heroVisual">
+          <div class="portrait-stage" id="portraitStage">
+            <div class="orbit orbit-1" aria-hidden="true"></div>
+            <div class="orbit orbit-2" aria-hidden="true"></div>
+            <div class="portrait-frame">
+              <img data-edit-img="hero.image" alt="Abdurrahman Bashir Haske">
+            </div>
+            <div class="float-badge badge-party">
+              <span class="logo logo-party" data-logo></span>
+              <span><strong data-edit="brand.partyShort"></strong><small data-edit="brand.party"></small></span>
+            </div>
+            <div class="float-badge badge-lga"><strong>21</strong><small>LGAs · One Adamawa</small></div>
+          </div>
+        </div>
+      </div>
+      <a class="scroll-cue" href="#about" aria-label="Scroll to about"><span></span></a>
+    </section>
+
+    <div class="marquee" aria-hidden="true">
+      <div class="marquee-track">
+        <span>Agriculture</span><i>✦</i><span>Development</span><i>✦</i><span>Access</span><i>✦</i><span>Youth</span><i>✦</i><span>Accountability</span><i>✦</i><span>Wealth</span><i>✦</i><span>Security</span><i>✦</i>
+        <span>Agriculture</span><i>✦</i><span>Development</span><i>✦</i><span>Access</span><i>✦</i><span>Youth</span><i>✦</i><span>Accountability</span><i>✦</i><span>Wealth</span><i>✦</i><span>Security</span><i>✦</i>
+      </div>
+    </div>
+
+    <!-- ABOUT -->
+    <section class="section about" id="about">
+      <div class="container about-grid">
+        <div class="about-media reveal">
+          <div class="depth-card" data-tilt>
+            <img data-edit-img="about.image" alt="Abdurrahman Bashir Haske">
+            <div class="depth-shine"></div>
+          </div>
+          <div class="about-plate" aria-hidden="true"></div>
+        </div>
+        <div class="about-copy">
+          <p class="kicker reveal" data-edit="about.kicker"></p>
+          <h2 class="section-title reveal" data-edit="about.heading"></h2>
+          <p class="lead reveal" data-edit="about.body"></p>
+          <p class="reveal" data-edit="about.body2"></p>
+          <div class="facts" id="facts"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- AGENDA -->
+    <section class="section agenda" id="agenda">
+      <div class="container">
+        <div class="section-head">
+          <p class="kicker reveal" data-edit="agenda.kicker"></p>
+          <h2 class="section-title reveal" data-edit="agenda.heading"></h2>
+          <p class="lead reveal" data-edit="agenda.intro"></p>
+        </div>
+        <div class="acronym reveal" id="acronym" aria-hidden="true"></div>
+        <div class="pillars" id="pillars"></div>
+      </div>
+    </section>
+
+    <!-- QUOTE -->
+    <section class="quote-band">
+      <div class="container">
+        <blockquote class="reveal">
+          <p data-edit="quote.text"></p>
+          <footer>— <span data-edit="quote.by"></span></footer>
+        </blockquote>
+      </div>
+    </section>
+
+    <!-- RUNNING MATE -->
+    <section class="section deputy" id="deputy">
+      <div class="container">
+        <div class="section-head">
+          <p class="kicker reveal" data-edit="deputy.kicker"></p>
+          <h2 class="section-title reveal" data-edit="deputy.teamHeading"></h2>
+        </div>
+        <div class="team-grid">
+          <figure class="team-photo reveal" data-tilt>
+            <img data-edit-img="deputy.teamImage" alt="Abdurrahman Bashir Haske and Engr. Safriel Glah">
+            <div class="depth-shine"></div>
+          </figure>
+          <div class="deputy-card reveal" data-tilt>
+            <div class="deputy-portrait"><img data-edit-img="deputy.image" alt="Engr. Safriel Glah"></div>
+            <h3 class="deputy-name" data-edit="deputy.name"></h3>
+            <p class="deputy-role" data-edit="deputy.role"></p>
+            <p data-edit="deputy.body"></p>
+            <p class="deputy-quote">“<span data-edit="deputy.quote"></span>”</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- GALLERY -->
+    <section class="section gallery" id="gallery">
+      <div class="container">
+        <div class="section-head">
+          <p class="kicker reveal" data-edit="gallery.kicker"></p>
+          <h2 class="section-title reveal" data-edit="gallery.heading"></h2>
+        </div>
+      </div>
+      <div class="carousel-scene" id="carouselScene">
+        <div class="carousel" id="carousel"></div>
+      </div>
+      <p class="carousel-hint">Drag to turn</p>
+      <div class="container gallery-editor" id="galleryEditor" hidden>
+        <h3>Gallery pictures</h3>
+        <div class="gallery-grid" id="galleryGrid"></div>
+      </div>
+    </section>
+
+    <!-- JOIN -->
+    <section class="join">
+      <div class="container join-inner reveal">
+        <h2 data-edit="join.heading"></h2>
+        <p data-edit="join.body"></p>
+        <a class="btn btn-gold btn-lg" href="/login"><span data-edit="join.cta"></span> <span aria-hidden="true">→</span></a>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container footer-inner">
+      <span class="nav-brand"><span class="logo logo-sm" data-logo></span><span data-edit="footer.text"></span></span>
+      <span class="footer-isp"><span class="isp-mark isp-mark-sm" data-isp-logo></span>Powered by ISP · Independent Structure Platform</span>
+      <a href="/login">Agent sign in</a>
+    </div>
+  </footer>
+
+  <input type="file" id="imagePicker" accept="image/png,image/jpeg,image/webp,image/svg+xml" hidden>
+
+  <script type="module" src="/js/landing.js"></script>
+</body>
+</html>
