@@ -16,9 +16,6 @@ try {
 const { db, ready, hashPassword, checkPassword, getContent, saveContent } = require("./db");
 
 const PORT = Number(process.env.PORT) || 3001;
-const DOJAH_BASE_URL = process.env.DOJAH_BASE_URL || "https://sandbox.dojah.io";
-const DOJAH_APP_ID = process.env.DOJAH_APP_ID || "";
-const DOJAH_SECRET_KEY = process.env.DOJAH_SECRET_KEY || "";
 const PUBLIC_DIR = path.join(__dirname, "public");
 const UPLOAD_DIR = path.join(PUBLIC_DIR, "uploads");
 // Sessions end after 10 minutes without activity. Every request pushes the end time back.
@@ -184,55 +181,11 @@ async function count(sql, ...args) {
   return (await db.prepare(sql).get(...args)).n;
 }
 
-// ---------- Dojah ----------
+// ---------- VIN verification ----------
 
-function normalizeDojah(entity) {
-  return {
-    full_name: entity.full_name || "",
-    vin: entity.voter_identification_number || entity.vin || "",
-    gender: entity.gender || "",
-    date_of_birth: entity.date_of_birth || "",
-    phone: entity.phone || "",
-    occupation: entity.occupation || "",
-    address: entity.address || "",
-    state: entity.state || "",
-    lga: entity.local_government || "",
-    ward: entity.registration_area_ward || "",
-    polling_unit: entity.polling_unit || "",
-    polling_unit_code: entity.polling_unit_code || "",
-    registered_on: entity.time_of_registration || "",
-  };
-}
-
-// Remembers recent lookups for 30 minutes, so checking a VIN and then saving the
-// person only costs one paid Dojah call.
-const vinCache = new Map();
-const VIN_CACHE_MS = 30 * 60 * 1000;
-
-async function lookupVin(vin) {
-  const cached = vinCache.get(vin);
-  if (cached && Date.now() - cached.at < VIN_CACHE_MS) return cached.card;
-  if (!DOJAH_APP_ID || !DOJAH_SECRET_KEY) {
-    throw new HttpError(500, "Dojah keys are not set. Add DOJAH_APP_ID and DOJAH_SECRET_KEY to the settings.");
-  }
-  let response;
-  try {
-    response = await fetch(`${DOJAH_BASE_URL}/api/v1/kyc/vin?vin=${encodeURIComponent(vin)}`, {
-      headers: { AppId: DOJAH_APP_ID, Authorization: DOJAH_SECRET_KEY },
-    });
-  } catch (err) {
-    console.error("Dojah request failed:", err.message);
-    throw new HttpError(502, "Could not reach the verification service. Try again.");
-  }
-  const json = await response.json().catch(() => ({}));
-  if (!response.ok || !json.entity) {
-    throw new HttpError(response.ok || response.status === 404 ? 404 : 502, json.error || "No voter record was found for that VIN.");
-  }
-  const card = normalizeDojah(json.entity);
-  vinCache.set(vin, { card, at: Date.now() });
-  if (vinCache.size > 2000) vinCache.delete(vinCache.keys().next().value);
-  return card;
-}
+// No voter register is connected yet, so every VIN lookup fails with this message.
+const VERIFY_UNAVAILABLE =
+  "Verification failed: cannot connect to the INEC database. Voter data is not currently active in this system. Please contact your developer.";
 
 // ---------- people ----------
 
@@ -314,17 +267,8 @@ async function createPerson(req, res) {
   if (!CAN_ADD[user.role].includes(role)) throw new HttpError(403, "You are not allowed to add that type of person.");
 
   const person = personInput(body);
+  // With no voter register connected, people are saved with the details typed in and marked not verified.
   const extra = { verified: false };
-
-  // If a VIN was given, check it with Dojah so the record is the real voter's card data.
-  if (person.vin && body.verify !== false) {
-    if (!VIN_PATTERN.test(person.vin)) throw new HttpError(400, "A VIN is 19 letters and numbers.");
-    const card = await lookupVin(person.vin);
-    for (const key of Object.keys(person)) {
-      if (key !== "vin" && key !== "phone" && card[key]) person[key] = clean(card[key], 300);
-    }
-    extra.verified = true;
-  }
 
   if (AGENT_ROLES.includes(role)) {
     Object.assign(extra, await agentAssignment(user, role, body));
@@ -847,9 +791,7 @@ async function route(req, res) {
     const body = await readBody(req);
     const vin = cleanVin(body.vin);
     if (!VIN_PATTERN.test(vin)) throw new HttpError(400, "A VIN is 19 letters and numbers. Check the number on the voter's card.");
-    const voter = await lookupVin(vin);
-    const existing = await db.prepare("SELECT full_name, role FROM people WHERE vin = ?").get(vin);
-    return sendJson(res, 200, { voter, alreadyRegistered: existing || null });
+    throw new HttpError(503, VERIFY_UNAVAILABLE);
   }
 
   const personMatch = /^\/api\/people\/(\d+)(\/password)?$/.exec(pathname);
