@@ -116,6 +116,12 @@ const SCHEMA = [
     approved_at TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`,
+  // Wrong-password count per login, for locking a login after too many tries.
+  `CREATE TABLE IF NOT EXISTS login_failures (
+    login TEXT PRIMARY KEY,
+    count INTEGER NOT NULL DEFAULT 0,
+    locked_until INTEGER NOT NULL DEFAULT 0
+  )`,
   `CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -144,6 +150,8 @@ function ready(adminLogin, adminPassword) {
     // Column added after the first version, for databases made before it existed.
     const columns = toObjects(await client.execute("PRAGMA table_info(people)")).map((c) => c.name);
     if (!columns.includes("import_id")) await client.execute("ALTER TABLE people ADD COLUMN import_id INTEGER");
+    // Ends the old 7-day sessions, which were stored unhashed and last longer than 10 minutes.
+    await client.execute({ sql: "DELETE FROM sessions WHERE expires_at > ?", args: [Date.now() + 11 * 60 * 1000] });
     const admin = await db.prepare("SELECT id FROM people WHERE role = 'super_admin' LIMIT 1").get();
     if (!admin) {
       await db

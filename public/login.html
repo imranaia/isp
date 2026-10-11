@@ -105,6 +105,11 @@
   <script>
     document.getElementById("ispMark").innerHTML = window.ispLogoSVG ? window.ispLogoSVG("login") : "";
     fetch("/api/me").then((r) => { if (r.ok) location.replace("/dashboard"); });
+    if (new URLSearchParams(location.search).has("expired")) {
+      const notice = document.getElementById("error");
+      notice.textContent = "You were signed out after 10 minutes without activity. Please sign in again.";
+      notice.hidden = false;
+    }
 
     const form = document.getElementById("form");
     form.addEventListener("submit", async (e) => {

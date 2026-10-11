@@ -26,7 +26,7 @@ async function api(path, options = {}) {
   });
   const data = await res.json().catch(() => ({}));
   if (res.status === 401) {
-    location.replace("/login");
+    location.replace("/login?expired=1");
     throw new Error("Please sign in.");
   }
   if (!res.ok) throw new Error(data.error || "Something went wrong.");
@@ -931,8 +931,9 @@ function showAccount() {
     <form class="card" style="max-width:640px" id="pwForm">
       <div class="card-head"><h2>Change password</h2></div>
       <div class="grid-2">
-        <label>New password<input type="password" id="pw1" minlength="4" autocomplete="new-password" required></label>
-        <label>Repeat new password<input type="password" id="pw2" minlength="4" autocomplete="new-password" required></label>
+        <label class="span-2">Current password<input type="password" id="pw0" autocomplete="current-password" required></label>
+        <label>New password<input type="password" id="pw1" minlength="6" autocomplete="new-password" required></label>
+        <label>Repeat new password<input type="password" id="pw2" minlength="6" autocomplete="new-password" required></label>
       </div>
       <button class="btn btn-primary" style="margin-top:16px">Save password</button>
       <div id="pwMsg"></div>
@@ -946,8 +947,8 @@ function showAccount() {
       return;
     }
     try {
-      await api(`/api/people/${me.id}/password`, { method: "PUT", body: { password: p1 } });
-      msg.innerHTML = `<div class="alert alert-ok">Password changed.</div>`;
+      await api(`/api/people/${me.id}/password`, { method: "PUT", body: { password: p1, currentPassword: document.getElementById("pw0").value } });
+      msg.innerHTML = `<div class="alert alert-ok">Password changed. Any other device signed in to this account has been signed out.</div>`;
       e.target.reset();
     } catch (err) {
       msg.innerHTML = `<div class="alert alert-error">${esc(err.message)}</div>`;
@@ -1325,4 +1326,31 @@ document.getElementById("logout").addEventListener("click", async () => {
   renderNav();
   addEventListener("hashchange", route);
   route();
+  watchIdle();
 })();
+
+// Signs out after 10 minutes without a click, key press or touch, so an unattended screen doesn't stay open.
+// While someone is active (even just typing in a form), the server is told now and then to keep the session going.
+function watchIdle() {
+  const IDLE_MS = 10 * 60 * 1000;
+  let lastActive = Date.now();
+  let lastPing = Date.now();
+  const onActivity = () => {
+    lastActive = Date.now();
+    if (lastActive - lastPing > 2 * 60 * 1000) {
+      lastPing = lastActive;
+      api("/api/me").catch(() => {});
+    }
+  };
+  const listen = (win) => {
+    for (const type of ["pointerdown", "keydown", "wheel", "touchstart"]) win.addEventListener(type, onActivity, { passive: true });
+  };
+  listen(window);
+  // Work inside the landing page editor (an iframe) counts as activity too.
+  document.addEventListener("load", (e) => e.target.tagName === "IFRAME" && listen(e.target.contentWindow), true);
+  setInterval(async () => {
+    if (Date.now() - lastActive < IDLE_MS) return;
+    await fetch("/api/logout", { method: "POST" }).catch(() => {});
+    location.replace("/login?expired=1");
+  }, 15_000);
+}

@@ -21,7 +21,12 @@ const DOJAH_APP_ID = process.env.DOJAH_APP_ID || "";
 const DOJAH_SECRET_KEY = process.env.DOJAH_SECRET_KEY || "";
 const PUBLIC_DIR = path.join(__dirname, "public");
 const UPLOAD_DIR = path.join(PUBLIC_DIR, "uploads");
-const SESSION_DAYS = 7;
+// Sessions end after 10 minutes without activity. Every request pushes the end time back.
+const SESSION_IDLE_MS = 10 * 60 * 1000;
+// Too many wrong passwords for one login locks that login for a while.
+const MAX_LOGIN_FAILURES = 5;
+const LOCKOUT_MS = 15 * 60 * 1000;
+const MIN_PASSWORD = 6;
 const ON_VERCEL = Boolean(process.env.VERCEL);
 
 // Starting login for the super admin, used only when the database is first created.
@@ -67,8 +72,16 @@ class HttpError extends Error {
   }
 }
 
+const SECURITY_HEADERS = {
+  "X-Content-Type-Options": "nosniff",
+  "X-Frame-Options": "SAMEORIGIN",
+  "Referrer-Policy": "strict-origin-when-cross-origin",
+  "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+  ...(ON_VERCEL ? { "Strict-Transport-Security": "max-age=31536000; includeSubDomains" } : {}),
+};
+
 function sendJson(res, status, body, headers = {}) {
-  res.writeHead(status, { "Content-Type": "application/json", "Cache-Control": "no-store", ...headers });
+  res.writeHead(status, { "Content-Type": "application/json", "Cache-Control": "no-store", ...SECURITY_HEADERS, ...headers });
   res.end(JSON.stringify(body));
 }
 
@@ -125,13 +138,34 @@ function parseCookies(req) {
   return out;
 }
 
+// Sessions are stored by a hash of the token, so a copy of the database can't be used to sign in.
+function tokenHash(token) {
+  return crypto.createHash("sha256").update(String(token)).digest("hex");
+}
+
+function sessionCookie(value, extra = "") {
+  // No Max-Age: the browser drops the cookie when it closes; the server ends the session after 10 idle minutes.
+  return `isp_session=${value}; HttpOnly; SameSite=Strict; Path=/${ON_VERCEL ? "; Secure" : ""}${extra}`;
+}
+
 async function currentUser(req) {
   const token = parseCookies(req).isp_session;
   if (!token) return null;
+  const hash = tokenHash(token);
+  const now = Date.now();
   const row = await db
-    .prepare(`SELECT ${PREFIXED_FIELDS}, p.path FROM sessions s JOIN people p ON p.id = s.person_id WHERE s.token = ? AND s.expires_at > ?`)
-    .get(token, Date.now());
-  return row || null;
+    .prepare(
+      `SELECT ${PREFIXED_FIELDS}, p.path, s.expires_at AS session_expires FROM sessions s JOIN people p ON p.id = s.person_id WHERE s.token = ? AND s.expires_at > ?`
+    )
+    .get(hash, now);
+  if (!row) return null;
+  // Activity keeps the session alive; written at most once a minute to spare the database.
+  if (row.session_expires - now < SESSION_IDLE_MS - 60_000) {
+    await db.prepare("UPDATE sessions SET expires_at = ? WHERE token = ?").run(now + SESSION_IDLE_MS, hash);
+  }
+  delete row.session_expires;
+  row.session_token = hash;
+  return row;
 }
 
 async function requireUser(req) {
@@ -297,7 +331,7 @@ async function createPerson(req, res) {
     const login = clean(body.login, 80).toLowerCase();
     const password = String(body.password || "");
     if (!login) throw new HttpError(400, "Give the agent a login (phone number or email).");
-    if (password.length < 4) throw new HttpError(400, "The agent's password must be at least 4 characters.");
+    if (password.length < MIN_PASSWORD) throw new HttpError(400, `The agent's password must be at least ${MIN_PASSWORD} characters.`);
     if (await db.prepare("SELECT 1 AS ok FROM people WHERE login = ?").get(login)) throw new HttpError(409, "That login is already taken.");
     extra.login = login;
     extra.password_hash = hashPassword(password);
@@ -581,12 +615,21 @@ async function deletePerson(req, res, id) {
 async function resetPassword(req, res, id) {
   const user = await requireUser(req);
   const body = await readBody(req);
-  const target = await db.prepare("SELECT id, path, role FROM people WHERE id = ?").get(id);
+  const target = await db.prepare("SELECT id, path, role, login, password_hash FROM people WHERE id = ?").get(id);
   const isSelf = target && target.id === user.id;
   if (!target || (!isSelf && !target.path.startsWith(user.path)) || target.role === "supporter") throw new HttpError(404, "Agent not found.");
+  // Changing your own password needs the current one, so an unattended screen can't be used to take over the account.
+  if (isSelf && !checkPassword(String(body.currentPassword || ""), target.password_hash)) {
+    throw new HttpError(400, "Your current password is wrong.");
+  }
   const password = String(body.password || "");
-  if (password.length < 4) throw new HttpError(400, "Password must be at least 4 characters.");
-  await db.prepare("UPDATE people SET password_hash = ? WHERE id = ?").run(hashPassword(password), id);
+  if (password.length < MIN_PASSWORD) throw new HttpError(400, `Password must be at least ${MIN_PASSWORD} characters.`);
+  // A new password signs the person out everywhere else (you stay signed in on this device) and clears any lock.
+  await db.batch([
+    ["UPDATE people SET password_hash = ? WHERE id = ?", [hashPassword(password), id]],
+    ["DELETE FROM sessions WHERE person_id = ? AND token != ?", [id, isSelf ? user.session_token : ""]],
+    ["DELETE FROM login_failures WHERE login = ?", [target.login || ""]],
+  ]);
   sendJson(res, 200, { ok: true });
 }
 
@@ -633,34 +676,51 @@ async function stats(req, res) {
 
 // ---------- auth ----------
 
+// Checked when the login doesn't exist, so a wrong login takes as long as a wrong password.
+const DUMMY_HASH = hashPassword(crypto.randomBytes(16).toString("hex"));
+
 async function login(req, res) {
   const body = await readBody(req);
   const loginName = clean(body.login, 80).toLowerCase();
+  const now = Date.now();
+  const failures = await db.prepare("SELECT count, locked_until FROM login_failures WHERE login = ?").get(loginName);
+  if (failures && failures.locked_until > now) {
+    const minutes = Math.ceil((failures.locked_until - now) / 60_000);
+    throw new HttpError(429, `Too many wrong passwords. This login is locked for ${minutes} more minute${minutes === 1 ? "" : "s"}.`);
+  }
   const person = await db.prepare("SELECT id, password_hash, role FROM people WHERE login = ?").get(loginName);
-  if (!person || person.role === "supporter" || !checkPassword(String(body.password || ""), person.password_hash)) {
+  const passwordOk = checkPassword(String(body.password || ""), (person && person.password_hash) || DUMMY_HASH);
+  if (!person || person.role === "supporter" || !passwordOk) {
+    // The count starts again once a lock has run out.
+    const count = (failures && !failures.locked_until ? failures.count : 0) + 1;
+    const lockedUntil = count >= MAX_LOGIN_FAILURES ? now + LOCKOUT_MS : 0;
+    await db
+      .prepare(
+        "INSERT INTO login_failures (login, count, locked_until) VALUES (?, ?, ?) ON CONFLICT(login) DO UPDATE SET count = excluded.count, locked_until = excluded.locked_until"
+      )
+      .run(loginName, lockedUntil ? 0 : count, lockedUntil);
+    if (lockedUntil) throw new HttpError(429, `Too many wrong passwords. This login is locked for ${LOCKOUT_MS / 60_000} minutes.`);
     throw new HttpError(401, "Wrong login or password.");
   }
   const token = crypto.randomBytes(32).toString("hex");
-  const expires = Date.now() + SESSION_DAYS * 86_400_000;
   await db.batch([
-    ["DELETE FROM sessions WHERE expires_at < ?", [Date.now()]],
-    ["INSERT INTO sessions (token, person_id, expires_at) VALUES (?, ?, ?)", [token, person.id, expires]],
+    ["DELETE FROM sessions WHERE expires_at < ?", [now]],
+    ["DELETE FROM login_failures WHERE login = ?", [loginName]],
+    ["INSERT INTO sessions (token, person_id, expires_at) VALUES (?, ?, ?)", [tokenHash(token), person.id, now + SESSION_IDLE_MS]],
   ]);
-  const secure = ON_VERCEL ? "; Secure" : "";
-  sendJson(res, 200, { ok: true }, {
-    "Set-Cookie": `isp_session=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${SESSION_DAYS * 86400}${secure}`,
-  });
+  sendJson(res, 200, { ok: true }, { "Set-Cookie": sessionCookie(token) });
 }
 
 async function logout(req, res) {
   const token = parseCookies(req).isp_session;
-  if (token) await db.prepare("DELETE FROM sessions WHERE token = ?").run(token);
-  sendJson(res, 200, { ok: true }, { "Set-Cookie": "isp_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0" });
+  if (token) await db.prepare("DELETE FROM sessions WHERE token = ?").run(tokenHash(token));
+  sendJson(res, 200, { ok: true }, { "Set-Cookie": sessionCookie("", "; Max-Age=0") });
 }
 
 async function me(req, res) {
   const user = await requireUser(req);
   delete user.path;
+  delete user.session_token;
   sendJson(res, 200, { user, canAdd: CAN_ADD[user.role], lgas: ADAMAWA_LGAS });
 }
 
@@ -720,7 +780,7 @@ function serveStatic(req, res, pathname) {
   fs.stat(filePath, (err, stat) => {
     if (err || !stat.isFile()) return sendJson(res, 404, { error: "Not found" });
     const ext = path.extname(filePath).toLowerCase();
-    const headers = { "Content-Type": MIME[ext] || "application/octet-stream" };
+    const headers = { "Content-Type": MIME[ext] || "application/octet-stream", ...SECURITY_HEADERS };
     // Uploaded SVGs are served as images only, never run as pages.
     if (pathname.startsWith("/uploads/")) headers["Content-Security-Policy"] = "default-src 'none'; style-src 'unsafe-inline'";
     res.writeHead(200, headers);
@@ -744,6 +804,15 @@ async function route(req, res) {
   if (!pathname.startsWith("/api/")) {
     if (method !== "GET" && method !== "HEAD") return sendJson(res, 405, { error: "Method not allowed" });
     return serveStatic(req, res, pathname);
+  }
+
+  // Requests that change data must come from this site's own pages.
+  if (method !== "GET" && method !== "HEAD" && req.headers.origin) {
+    let originHost = "";
+    try {
+      originHost = new URL(req.headers.origin).host;
+    } catch {}
+    if (originHost !== (req.headers["x-forwarded-host"] || req.headers.host)) throw new HttpError(403, "Request blocked.");
   }
 
   await ready(ADMIN_LOGIN, ADMIN_PASSWORD);
