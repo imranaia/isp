@@ -1307,10 +1307,12 @@ function renderLocations() {
 // ---------- start ----------
 
 document.getElementById("menuBtn").addEventListener("click", () => document.getElementById("sidebar").classList.toggle("open"));
-document.getElementById("logout").addEventListener("click", async () => {
-  await fetch("/api/logout", { method: "POST" });
-  location.replace("/login");
-});
+for (const id of ["logout", "logoutTop"]) {
+  document.getElementById(id).addEventListener("click", async () => {
+    await fetch("/api/logout", { method: "POST" }).catch(() => {});
+    location.replace("/login");
+  });
+}
 
 (async function init() {
   try {

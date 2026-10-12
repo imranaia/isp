@@ -9,7 +9,7 @@ Campaign platform for Abdurrahman Bashir Haske, APM governorship candidate, Adam
 - **Locations**: all 21 LGAs. The super admin adds wards and polling units; agents are assigned by picking LGA → ward → polling unit.
 - **Uploads**: every agent has their own Excel template (name, role and area on top). Uploads are credited to that agent and wait for the super admin to approve them.
 - **Printing**: every table, agent list, upload and LGA can be printed with a header and signature lines.
-- **Voter's card verification**: not connected yet. Verifying a VIN shows "cannot connect to the INEC database" until a voter register is added.
+- **Voter's card verification**: not connected yet. Verifying a VIN shows "Verification Failed: System integration is currently awaiting INEC's Admin Approval." until the INEC integration is approved.
 - **Excel**: download a template, fill it, upload it to add many supporters at once. Any table can be exported to Excel.
 
 ## Run it

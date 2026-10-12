@@ -183,9 +183,8 @@ async function count(sql, ...args) {
 
 // ---------- VIN verification ----------
 
-// No voter register is connected yet, so every VIN lookup fails with this message.
-const VERIFY_UNAVAILABLE =
-  "Verification failed: cannot connect to the INEC database. Voter data is not currently active in this system. Please contact your developer.";
+// The INEC integration is not approved yet, so every VIN lookup fails with this message.
+const VERIFY_UNAVAILABLE = "Verification Failed: System integration is currently awaiting INEC's Admin Approval.";
 
 // ---------- people ----------
 
