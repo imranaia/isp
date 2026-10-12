@@ -435,43 +435,81 @@ function pickImage(onDone) {
   picker.click();
 }
 
+// The live site (Vercel) refuses requests over about 4.5 MB, and pictures travel as text that is a third
+// larger than the file, so every upload is kept under this size.
+const MAX_UPLOAD_CHARS = 3_500_000;
+
 // Large photos are resized in the browser (longest side 1800px) so uploads stay small and fast.
+// If the result is still too big (a photo saved as PNG, for example), it is saved again as WEBP or JPG,
+// at lower quality and then smaller sizes, until it fits.
 async function shrinkImage(file) {
   const asDataUrl = (blob) =>
-    new Promise((resolve) => {
+    new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => resolve(reader.result);
+      reader.onerror = reject;
       reader.readAsDataURL(blob);
     });
   if (file.type === "image/svg+xml" || file.size < 900_000) return asDataUrl(file);
+  let bitmap;
   try {
-    const bitmap = await createImageBitmap(file);
-    const scale = Math.min(1, 1800 / Math.max(bitmap.width, bitmap.height));
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.round(bitmap.width * scale);
-    canvas.height = Math.round(bitmap.height * scale);
-    canvas.getContext("2d").drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-    const type = file.type === "image/png" ? "image/png" : "image/jpeg";
-    return canvas.toDataURL(type, 0.85);
+    bitmap = await createImageBitmap(file);
   } catch {
     return asDataUrl(file);
   }
+  const canvas = document.createElement("canvas");
+  const draw = (longest) => {
+    const scale = Math.min(1, longest / Math.max(bitmap.width, bitmap.height));
+    canvas.width = Math.round(bitmap.width * scale);
+    canvas.height = Math.round(bitmap.height * scale);
+    canvas.getContext("2d").drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  };
+  draw(1800);
+  // PNG first for PNGs (keeps sharp logos sharp); WEBP keeps see-through backgrounds; JPG works everywhere.
+  const attempts = [
+    ...(file.type === "image/png" ? [[1800, "image/png"]] : []),
+    [1800, "image/webp", 0.85],
+    [1800, "image/jpeg", 0.85],
+    [1800, "image/webp", 0.7],
+    [1800, "image/jpeg", 0.7],
+    [1400, "image/webp", 0.75],
+    [1400, "image/jpeg", 0.75],
+    [1000, "image/jpeg", 0.75],
+  ];
+  let size = 1800;
+  for (const [longest, type, quality] of attempts) {
+    if (longest !== size) draw((size = longest));
+    const dataUrl = canvas.toDataURL(type, quality);
+    // Browsers that can't make WEBP quietly return PNG instead; the size check below still applies.
+    if (dataUrl.length <= MAX_UPLOAD_CHARS) return dataUrl;
+  }
+  return canvas.toDataURL("image/jpeg", 0.6);
 }
 
 picker.addEventListener("change", async () => {
   const file = picker.files[0];
   if (!file || !pickTarget) return;
   setStatus("Uploading picture…");
-  const dataUrl = await shrinkImage(file);
-  const res = await fetch("/api/upload", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ dataUrl }),
-  });
-  const data = await res.json();
-  if (!res.ok) return setStatus(data.error || "Upload failed.");
-  pickTarget(data.url);
-  markDirty();
+  try {
+    const dataUrl = await shrinkImage(file);
+    if (dataUrl.length > MAX_UPLOAD_CHARS) {
+      return setStatus("That picture is too large to upload. Use a smaller JPG or PNG.");
+    }
+    const res = await fetch("/api/upload", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dataUrl }),
+    });
+    // A refused upload can come back as plain text instead of JSON.
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return setStatus(data.error || (res.status === 413 ? "That picture is too large to upload. Use a smaller one." : "Upload failed. Try again."));
+    }
+    pickTarget(data.url);
+    markDirty();
+  } catch {
+    setStatus("Upload failed. Check your connection and try again.");
+  }
 });
 
 function renderGalleryEditor() {
