@@ -141,6 +141,29 @@ function checkPassword(password, stored) {
   return crypto.timingSafeEqual(test, Buffer.from(hash, "hex"));
 }
 
+// One-off reset of the super admin: when ADMIN_RESET_PASSWORD is set (on Vercel, never in the code),
+// the super admin signs in as "admin" with that password and is signed out everywhere.
+// It runs once per ADMIN_RESET_ID (remembered in settings), so later password changes from My Account stick.
+// Only the super admin's own row has role super_admin; nobody can add another, so there is one admin.
+async function resetAdminOnce() {
+  const password = process.env.ADMIN_RESET_PASSWORD;
+  if (!password) return;
+  const key = `admin_reset_${process.env.ADMIN_RESET_ID || "1"}`;
+  if (await db.prepare("SELECT 1 AS done FROM settings WHERE key = ?").get(key)) return;
+  const admin = await db.prepare("SELECT id, login FROM people WHERE role = 'super_admin' ORDER BY id LIMIT 1").get();
+  if (!admin) return;
+  // If someone else already has the login "admin", move them aside so the super admin can take it.
+  const clash = await db.prepare("SELECT id FROM people WHERE login = 'admin' AND id != ?").get(admin.id);
+  await db.batch([
+    ...(clash ? [["UPDATE people SET login = ? WHERE id = ?", [`admin_${clash.id}`, clash.id]]] : []),
+    ["UPDATE people SET login = 'admin', password_hash = ? WHERE id = ?", [hashPassword(password), admin.id]],
+    ["DELETE FROM sessions WHERE person_id = ?", [admin.id]],
+    ["DELETE FROM login_failures WHERE login IN ('admin', ?)", [admin.login || ""]],
+    ["INSERT INTO settings (key, value) VALUES (?, ?)", [key, new Date().toISOString()]],
+  ]);
+  console.log("Super admin login reset to: admin");
+}
+
 // Creates the tables and the super admin the first time. Runs once per server start.
 let readyPromise = null;
 function ready(adminLogin, adminPassword) {
@@ -159,6 +182,7 @@ function ready(adminLogin, adminPassword) {
         .run(adminLogin.toLowerCase(), hashPassword(adminPassword));
       console.log(`Created super admin login: ${adminLogin}`);
     }
+    await resetAdminOnce();
   })().catch((err) => {
     readyPromise = null;
     throw err;
