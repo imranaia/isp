@@ -186,6 +186,33 @@ async function count(sql, ...args) {
 // The INEC integration is not approved yet, so every VIN lookup fails with this message.
 const VERIFY_UNAVAILABLE = "Verification Failed: System integration is currently awaiting INEC's Admin Approval.";
 
+// Checks a whole list of VINs at once: the format, repeats within the list, and who is already in the system.
+// The INEC lookup itself is not connected yet, so a VIN that passes these checks is reported as awaiting INEC.
+async function verifyVins(req, res) {
+  const user = await requireUser(req);
+  const body = await readBody(req, 1_000_000);
+  const list = (Array.isArray(body.vins) ? body.vins : []).slice(0, 5000).map(cleanVin);
+  if (!list.some(Boolean)) throw new HttpError(400, "Add at least one VIN.");
+  const valid = [...new Set(list.filter((v) => VIN_PATTERN.test(v)))];
+  const found = new Map();
+  for (let i = 0; i < valid.length; i += 400) {
+    const chunk = valid.slice(i, i + 400);
+    const rows = await db.prepare(`SELECT vin, full_name, role, path FROM people WHERE vin IN (${chunk.map(() => "?").join(",")})`).all(...chunk);
+    for (const r of rows) found.set(r.vin, r);
+  }
+  const seen = new Set();
+  const results = list.map((vin) => {
+    if (!VIN_PATTERN.test(vin)) return { vin, status: "invalid" };
+    if (seen.has(vin)) return { vin, status: "repeat" };
+    seen.add(vin);
+    const person = found.get(vin);
+    // Names are only shown for people in your own structure.
+    if (person) return person.path.startsWith(user.path) ? { vin, status: "registered", role: person.role, full_name: person.full_name } : { vin, status: "registered" };
+    return { vin, status: "awaiting" };
+  });
+  sendJson(res, 200, { results, message: VERIFY_UNAVAILABLE });
+}
+
 // ---------- people ----------
 
 function personInput(body) {
@@ -792,6 +819,7 @@ async function route(req, res) {
     if (!VIN_PATTERN.test(vin)) throw new HttpError(400, "A VIN is 19 letters and numbers. Check the number on the voter's card.");
     throw new HttpError(503, VERIFY_UNAVAILABLE);
   }
+  if (method === "POST" && pathname === "/api/verify-vins") return verifyVins(req, res);
 
   const personMatch = /^\/api\/people\/(\d+)(\/password)?$/.exec(pathname);
   if (personMatch) {

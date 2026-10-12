@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,700&family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="icon" href="/img/isp-logo.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/css/app.css?v=2">
+  <link rel="stylesheet" href="/css/app.css?v=3">
   <script src="/js/isp-logo.js"></script>
 </head>
 <body>
@@ -50,6 +50,10 @@
         <button type="button" class="icon-btn" data-close aria-label="Close">✕</button>
       </header>
       <div class="modal-body">
+        <div class="alert alert-ok draft-note" id="draftNote" hidden>
+          <span>Your unsaved entry was brought back.</span>
+          <button type="button" class="link-btn" id="draftFresh">Start fresh</button>
+        </div>
         <fieldset>
           <legend>Voter's card</legend>
           <div class="vin-row">
@@ -63,15 +67,15 @@
           <legend>Personal details</legend>
           <div class="grid-2">
             <label class="span-2">Full name<input name="full_name" required></label>
-            <label>Gender<input name="gender"></label>
-            <label>Date of birth<input name="date_of_birth"></label>
+            <label>Gender<select name="gender" id="pGender"><option value="">Choose gender…</option><option>Male</option><option>Female</option></select></label>
+            <label>Date of birth<input name="date_of_birth" id="pDob" type="date" min="1900-01-01"></label>
             <label>Phone<input name="phone" inputmode="tel"></label>
             <label>Occupation<input name="occupation"></label>
             <label class="span-2">Address<input name="address"></label>
-            <label>Local government<input name="lga"></label>
-            <label>Ward<input name="ward"></label>
-            <label>Polling unit<input name="polling_unit"></label>
-            <label>Polling unit code<input name="polling_unit_code"></label>
+            <label>Local government<select name="lga" id="pLga"></select></label>
+            <label>Ward<select name="ward" id="pWard"></select></label>
+            <label class="span-2">Polling unit<select name="polling_unit" id="pPu"></select></label>
+            <label>Polling unit code<input name="polling_unit_code" id="pPuCode" readonly placeholder="Filled from the polling unit"></label>
           </div>
         </fieldset>
 
@@ -96,7 +100,7 @@
         <div class="alert alert-error" id="personError" hidden></div>
       </div>
       <footer class="modal-foot">
-        <button type="button" class="btn btn-ghost" data-close>Cancel</button>
+        <button type="button" class="btn btn-ghost" id="personCancel">Cancel</button>
         <button type="submit" class="btn btn-primary" id="personSubmit">Save</button>
       </footer>
     </form>
@@ -121,6 +125,6 @@
   <div id="printArea" class="print-area"></div>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js" defer></script>
-  <script src="/js/app.js?v=2" defer></script>
+  <script src="/js/app.js?v=3" defer></script>
 </body>
 </html>

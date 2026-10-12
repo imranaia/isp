@@ -297,7 +297,21 @@ function showVerify() {
         <p class="hint">19 letters and numbers, printed on the voter's card.</p>
       </form>
       <div id="vresult"></div>
+    </div>
+    <div class="card verify-box" style="margin-top:20px">
+      <div class="card-head"><h2>Check many VINs at once</h2></div>
+      <form id="bulkForm">
+        <label for="bulkVins" class="muted">Paste VINs (one per line), or choose an Excel file with a VIN column. Up to 5,000 at a time.</label>
+        <textarea id="bulkVins" rows="6" placeholder="90F5B1407E296460333&#10;90F5B1407E296460334&#10;…" style="margin-top:8px;font-family:ui-monospace,Consolas,monospace;text-transform:uppercase"></textarea>
+        <div class="bulk-actions">
+          <button class="btn btn-primary" id="bulkBtn">Check all</button>
+          <label class="btn btn-outline">⇪ Choose Excel file<input type="file" id="bulkFile" accept=".xlsx,.xls,.csv" hidden></label>
+          <span class="hint" id="bulkCount" style="margin:0"></span>
+        </div>
+      </form>
+      <div id="bulkResult"></div>
     </div>`;
+  setupBulkVerify();
   document.getElementById("verifyForm").addEventListener("submit", async (e) => {
     e.preventDefault();
     const out = document.getElementById("vresult");
@@ -336,6 +350,122 @@ function showVerify() {
       btn.textContent = "Verify";
     }
   });
+}
+
+// Checking many VINs at once. Each line (or Excel row) is checked for format, repeats in the list,
+// and whether the person is already in the system. Names from an Excel file are kept beside their VIN.
+const BULK_STATUS = {
+  invalid: "Wrong format",
+  repeat: "Repeated in list",
+  registered: "Already registered",
+  awaiting: "Awaiting INEC",
+};
+
+function setupBulkVerify() {
+  const box = document.getElementById("bulkVins");
+  const countEl = document.getElementById("bulkCount");
+  let names = new Map(); // VIN -> name, from an Excel file
+  const lines = () => box.value.split(/\r?\n/).map((l) => l.replace(/\s+/g, "").toUpperCase()).filter(Boolean);
+  const showCount = () => {
+    const n = lines().length;
+    countEl.textContent = n ? `${n.toLocaleString()} VIN${n === 1 ? "" : "s"} in the list` : "";
+  };
+  box.addEventListener("input", showCount);
+
+  document.getElementById("bulkFile").addEventListener("change", async (e) => {
+    const file = e.target.files[0];
+    e.target.value = "";
+    if (!file) return;
+    if (!window.XLSX) return toast("The Excel tool is still loading. Try again in a moment.");
+    try {
+      const book = XLSX.read(await file.arrayBuffer());
+      const { rows } = parseSheet(book.Sheets[book.SheetNames[0]]);
+      const withVin = rows.filter((r) => r.vin);
+      if (!withVin.length) return toast("No VIN column found in that file.");
+      names = new Map(withVin.map((r) => [r.vin.replace(/\s+/g, "").toUpperCase(), r.full_name || ""]));
+      box.value = withVin.map((r) => r.vin).join("\n");
+      showCount();
+      toast(`${withVin.length.toLocaleString()} VINs read from ${file.name}`);
+    } catch {
+      toast("Could not read that file. Use an .xlsx file with a VIN column.");
+    }
+  });
+
+  document.getElementById("bulkForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const out = document.getElementById("bulkResult");
+    const vins = lines();
+    if (!vins.length) {
+      out.innerHTML = `<div class="alert alert-error">Paste at least one VIN, or choose an Excel file.</div>`;
+      return;
+    }
+    if (vins.length > 5000) {
+      out.innerHTML = `<div class="alert alert-error">That is ${vins.length.toLocaleString()} VINs. Check up to 5,000 at a time.</div>`;
+      return;
+    }
+    const btn = document.getElementById("bulkBtn");
+    btn.disabled = true;
+    btn.textContent = "Checking…";
+    try {
+      const { results, message } = await api("/api/verify-vins", { method: "POST", body: { vins } });
+      results.forEach((r) => (r.name = r.full_name || names.get(r.vin) || ""));
+      renderBulkResults(out, results, message);
+    } catch (err) {
+      out.innerHTML = `<div class="alert alert-error">${esc(err.message)}</div>`;
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Check all";
+    }
+  });
+}
+
+function bulkResultText(r) {
+  if (r.status === "invalid") return "Not 19 letters and numbers.";
+  if (r.status === "repeat") return "Appears more than once in this list.";
+  if (r.status === "registered") return r.role ? `In the system as ${ROLE_LABEL[r.role]}: ${r.full_name}` : "Already registered in another area.";
+  return "Format correct. Not yet checked against the INEC register.";
+}
+
+function renderBulkResults(out, results, message) {
+  const counts = Object.fromEntries(Object.keys(BULK_STATUS).map((s) => [s, results.filter((r) => r.status === s).length]));
+  out.innerHTML = `
+    <div class="bulk-summary">
+      <span class="pill">${results.length.toLocaleString()} checked</span>
+      ${Object.entries(BULK_STATUS)
+        .filter(([s]) => counts[s])
+        .map(([s, label]) => `<span class="pill pill-${s}">${counts[s].toLocaleString()} · ${label}</span>`)
+        .join("")}
+    </div>
+    ${counts.awaiting ? `<div class="alert alert-warn">${esc(message)}</div>` : ""}
+    <div class="bulk-actions" style="margin-bottom:12px">
+      <button class="btn btn-outline btn-small" id="bulkExport">Export Excel</button>
+      <button class="btn btn-outline btn-small" id="bulkPrint">🖨 Print</button>
+    </div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>#</th><th>VIN</th><th>Name</th><th>Result</th><th>Details</th></tr></thead>
+      <tbody>${results
+        .map(
+          (r, i) => `<tr><td>${i + 1}</td><td class="mono">${esc(r.vin || "(blank)")}</td><td>${esc(r.name || "—")}</td>
+            <td><span class="pill pill-${r.status}">${BULK_STATUS[r.status]}</span></td><td class="wrap">${esc(bulkResultText(r))}</td></tr>`
+        )
+        .join("")}</tbody>
+    </table></div>`;
+  const columns = [
+    ["vin", "VIN"],
+    ["name", "Name"],
+    ["status", "Result", (r) => BULK_STATUS[r.status]],
+    ["details", "Details", bulkResultText],
+  ];
+  document.getElementById("bulkExport").addEventListener("click", () => {
+    if (!window.XLSX) return toast("The Excel tool is still loading. Try again in a moment.");
+    const sheet = XLSX.utils.json_to_sheet(results.map((r, i) => ({ "#": i + 1, ...Object.fromEntries(columns.map(([k, label, fn]) => [label, fn ? fn(r) : r[k]])) })));
+    const book = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(book, sheet, "VIN check");
+    XLSX.writeFile(book, `ISP-VIN-check-${new Date().toISOString().slice(0, 10)}.xlsx`);
+  });
+  document.getElementById("bulkPrint").addEventListener("click", () =>
+    printReport({ title: "VIN check", columns, rows: results, note: counts.awaiting ? message : "" })
+  );
 }
 
 // ---------- people tables ----------
@@ -545,12 +675,147 @@ const personModal = document.getElementById("personModal");
 const personForm = document.getElementById("personForm");
 let personRole = null;
 
+const pLga = document.getElementById("pLga");
+const pWard = document.getElementById("pWard");
+const pPu = document.getElementById("pPu");
+
+// Voters must be at least 18, so the calendar doesn't offer later birth dates.
+function latestBirthDate() {
+  const d = new Date();
+  d.setFullYear(d.getFullYear() - 18);
+  return d.toISOString().slice(0, 10);
+}
+
+// Dates come as 2001-03-25, or as 25/03/2001 (day first) from voter's cards and Excel files.
+function toDateValue(text) {
+  const s = String(text || "").trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const m = /^(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})$/.exec(s);
+  return m ? `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}` : "";
+}
+
+function toGender(text) {
+  const s = String(text || "").trim().toLowerCase();
+  if (s === "m" || s === "male") return "Male";
+  if (s === "f" || s === "female") return "Female";
+  return "";
+}
+
+// Picks the option matching a value (ignoring case) or a polling unit code. Returns false if none matches.
+function selectLoose(select, value) {
+  const want = String(value || "").trim().toLowerCase();
+  if (!want) return false;
+  const match = [...select.options].find((o) => o.value && (o.value.toLowerCase() === want || (o.dataset.code || "").toLowerCase() === want));
+  if (match) select.value = match.value;
+  return Boolean(match);
+}
+
+function syncPuCode() {
+  document.getElementById("pPuCode").value = pPu.selectedOptions[0]?.dataset.code || "";
+}
+
+// Sets the voter's own local government, ward and polling unit, filling each dropdown from the one above it.
+function setPersonalLocation({ lga, ward, polling_unit, polling_unit_code }) {
+  pLga.value = "";
+  selectLoose(pLga, lga);
+  setWardOptions(pWard, pLga.value);
+  selectLoose(pWard, ward);
+  setUnitOptions(pPu, pLga.value, pWard.value);
+  if (!selectLoose(pPu, polling_unit)) selectLoose(pPu, polling_unit_code);
+  syncPuCode();
+}
+
+function setAssignLocation({ assign_lga, assign_ward, assign_pu }) {
+  const lgaSelect = document.getElementById("assignLga");
+  const wardSelect = document.getElementById("assignWard");
+  if (!lgaSelect.disabled) selectLoose(lgaSelect, assign_lga);
+  fillWardOptions();
+  if (!wardSelect.disabled) selectLoose(wardSelect, assign_ward);
+  fillUnitOptions();
+  selectLoose(document.getElementById("assignPu"), assign_pu);
+}
+
+// Puts saved values back into the form: plain fields first, then the dropdowns in order.
+function applyFormValues(values) {
+  for (const el of personForm.elements) {
+    if (el.name && el.tagName === "INPUT" && el.type !== "date" && el.name !== "password" && values[el.name]) el.value = values[el.name];
+  }
+  if (values.gender) document.getElementById("pGender").value = toGender(values.gender);
+  if (values.date_of_birth) document.getElementById("pDob").value = toDateValue(values.date_of_birth);
+  setPersonalLocation(values);
+  setAssignLocation(values);
+}
+
+// ---------- unsaved entries ----------
+// What's typed in the Add form is kept in this browser until it is saved or Cancel is pressed,
+// so closing the form by mistake, reloading the page or being signed out for inactivity doesn't lose it.
+// Passwords are never kept. Signing out on purpose clears every unsaved entry.
+
+function draftKey(role) {
+  return `isp_draft_${state.user.id}_${role}`;
+}
+
+function readDraft(role) {
+  try {
+    return JSON.parse(localStorage.getItem(draftKey(role)) || "null");
+  } catch {
+    return null;
+  }
+}
+
+function saveDraft() {
+  if (personModal.hidden || !personRole) return;
+  const values = {};
+  for (const el of personForm.elements) {
+    if (el.name && el.name !== "password" && el.value) values[el.name] = el.value;
+  }
+  try {
+    localStorage.setItem(draftKey(personRole), JSON.stringify(values));
+  } catch {
+    // Storage blocked (private window); the form still works, it just won't be remembered.
+  }
+}
+
+function clearDraft(role) {
+  try {
+    localStorage.removeItem(draftKey(role));
+  } catch {}
+}
+
+function clearAllDrafts() {
+  try {
+    Object.keys(localStorage)
+      .filter((k) => k.startsWith("isp_draft_"))
+      .forEach((k) => localStorage.removeItem(k));
+  } catch {}
+}
+
+// Only real typing and choosing counts, so opening the form alone never creates an unsaved entry.
+personForm.addEventListener("input", saveDraft);
+personForm.addEventListener("change", saveDraft);
+
+function closePersonModal() {
+  personModal.hidden = true;
+  if (readDraft(personRole)) toast("Your entry is kept. Open the form again to continue.");
+}
+
+document.getElementById("personCancel").addEventListener("click", () => {
+  clearDraft(personRole);
+  personModal.hidden = true;
+});
+
+document.getElementById("draftFresh").addEventListener("click", () => {
+  clearDraft(personRole);
+  openPersonModal(personRole);
+});
+
 function openPersonModal(role, card = null) {
   personRole = role;
   personForm.reset();
   document.getElementById("personError").hidden = true;
   document.getElementById("personTitle").textContent = `Add ${ROLE_LABEL[role]}`;
   document.getElementById("vinHint").textContent = "Enter the VIN and click Fetch details to fill the form from the voter's card.";
+  document.getElementById("pDob").max = latestBirthDate();
 
   const isAgent = AGENT_ROLES.includes(role);
   document.getElementById("assignBox").hidden = !isAgent;
@@ -573,6 +838,16 @@ function openPersonModal(role, card = null) {
     wardSelect.disabled = true;
   }
   fillUnitOptions();
+
+  // The voter's own location starts at the area of whoever is adding them; it can be changed.
+  pLga.innerHTML = `<option value="">Choose local government…</option>` + state.lgas.map((l) => `<option>${esc(l)}</option>`).join("");
+  setPersonalLocation({ lga: me.assign_lga, ward: me.assign_ward, polling_unit: me.assign_pu });
+
+  // Bring back an unsaved entry, unless this form was opened for a different voter's card.
+  const draft = readDraft(role);
+  const useDraft = draft && (!card || !draft.vin || draft.vin === card.vin);
+  if (useDraft) applyFormValues(draft);
+  document.getElementById("draftNote").hidden = !useDraft;
   if (card) fillFromCard(card);
   personModal.hidden = false;
   setTimeout(() => document.getElementById("pVin").focus(), 50);
@@ -581,8 +856,11 @@ function openPersonModal(role, card = null) {
 function fillFromCard(card) {
   for (const [key, value] of Object.entries(card)) {
     const input = personForm.elements[key];
-    if (input && value && key !== "assign_lga") input.value = value;
+    if (input && value && input.tagName === "INPUT" && input.type !== "date") input.value = value;
   }
+  if (toGender(card.gender)) document.getElementById("pGender").value = toGender(card.gender);
+  if (toDateValue(card.date_of_birth)) document.getElementById("pDob").value = toDateValue(card.date_of_birth);
+  if (card.lga) setPersonalLocation(card);
   document.getElementById("vinHint").textContent = "✓ Details filled from the voter's card.";
   // Suggest the agent's area from their own card, if it isn't already fixed.
   const lgaSelect = document.getElementById("assignLga");
@@ -610,31 +888,46 @@ function lgaTree(name) {
   return state.locations.find((l) => l.name === name);
 }
 
-function fillWardOptions() {
-  const lga = document.getElementById("assignLga").value;
-  const select = document.getElementById("assignWard");
-  if (select.disabled) return;
+// Fills a ward dropdown with the wards of a local government, keeping the current choice if it is still there.
+function setWardOptions(select, lga) {
   const keep = select.value;
   const wards = lgaTree(lga)?.wards || [];
   select.innerHTML =
     `<option value="">${lga ? (wards.length ? "Choose ward…" : "No wards yet") : "Choose a local government first"}</option>` +
     wards.map((w) => `<option>${esc(w.name)}</option>`).join("");
   if (wards.some((w) => w.name === keep)) select.value = keep;
-  updateAssignHint();
 }
 
-function fillUnitOptions() {
-  const lga = document.getElementById("assignLga").value;
-  const ward = document.getElementById("assignWard").value;
-  const select = document.getElementById("assignPu");
+function setUnitOptions(select, lga, ward) {
   const keep = select.value;
   const units = lgaTree(lga)?.wards.find((w) => w.name === ward)?.units || [];
   select.innerHTML =
     `<option value="">${ward ? (units.length ? "Choose polling unit…" : "No polling units yet") : "Choose a ward first"}</option>` +
     units.map((u) => `<option value="${esc(u.name)}" data-code="${esc(u.code)}">${esc(u.code ? `${u.code} — ${u.name}` : u.name)}</option>`).join("");
   if (units.some((u) => u.name === keep)) select.value = keep;
+}
+
+function fillWardOptions() {
+  const select = document.getElementById("assignWard");
+  if (!select.disabled) setWardOptions(select, document.getElementById("assignLga").value);
   updateAssignHint();
 }
+
+function fillUnitOptions() {
+  setUnitOptions(document.getElementById("assignPu"), document.getElementById("assignLga").value, document.getElementById("assignWard").value);
+  updateAssignHint();
+}
+
+pLga.addEventListener("change", () => {
+  setWardOptions(pWard, pLga.value);
+  setUnitOptions(pPu, pLga.value, pWard.value);
+  syncPuCode();
+});
+pWard.addEventListener("change", () => {
+  setUnitOptions(pPu, pLga.value, pWard.value);
+  syncPuCode();
+});
+pPu.addEventListener("change", syncPuCode);
 
 function updateAssignHint() {
   const hint = document.getElementById("assignHint");
@@ -677,7 +970,10 @@ document.getElementById("fetchVin").addEventListener("click", async () => {
 });
 
 personModal.addEventListener("click", (e) => {
-  if (e.target === personModal || e.target.closest("[data-close]")) personModal.hidden = true;
+  if (e.target === personModal || e.target.closest("[data-close]")) closePersonModal();
+});
+addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !personModal.hidden) closePersonModal();
 });
 
 personForm.addEventListener("submit", async (e) => {
@@ -693,6 +989,7 @@ personForm.addEventListener("submit", async (e) => {
   btn.textContent = "Saving…";
   try {
     const { person } = await api("/api/people", { method: "POST", body });
+    clearDraft(personRole);
     personModal.hidden = true;
     toast(`${person.full_name} added as ${ROLE_LABEL[person.role]}`);
     if (location.hash.slice(1) === personRole) loadTable();
@@ -1309,6 +1606,7 @@ function renderLocations() {
 document.getElementById("menuBtn").addEventListener("click", () => document.getElementById("sidebar").classList.toggle("open"));
 for (const id of ["logout", "logoutTop"]) {
   document.getElementById(id).addEventListener("click", async () => {
+    clearAllDrafts();
     await fetch("/api/logout", { method: "POST" }).catch(() => {});
     location.replace("/login");
   });
