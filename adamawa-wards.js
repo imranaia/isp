@@ -1,6 +1,7 @@
 // The wards of every local government in Adamawa State: [ward code, ward name, number of polling units].
 // From the campaign structure document ("Rufai Structure"), 226 wards in all.
-// The local government names match ADAMAWA_LGAS in server.js.
+// The local government names match ADAMAWA_LGAS in server.js. They are listed in the order of their
+// INEC codes (Demsa 01 … Yola South 21), which db.js uses to build polling unit codes, so keep this order.
 
 module.exports = {
   Demsa: [

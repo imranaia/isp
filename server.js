@@ -458,18 +458,67 @@ async function addWards(req, res) {
   sendJson(res, 201, { added, skipped: names.length - added });
 }
 
+// Renaming a polling unit also renames it on every agent in charge of it and every person registered at it,
+// because people store the polling unit by name.
+function renameUnitStatements(unit, name) {
+  return [
+    ["UPDATE polling_units SET name = ? WHERE id = ?", [name, unit.id]],
+    ["UPDATE people SET assign_pu = ? WHERE assign_lga = ? AND assign_ward = ? AND assign_pu = ?", [name, unit.lga, unit.ward, unit.name]],
+    ["UPDATE people SET polling_unit = ? WHERE lga = ? AND ward = ? AND polling_unit = ?", [name, unit.lga, unit.ward, unit.name]],
+  ];
+}
+
+// Adds polling units to a ward. A line whose code matches a polling unit already in the ward renames
+// that unit instead, so a list of real names can be pasted over the numbered ones ("PU 001", …).
 async function addUnits(req, res) {
   await requireSuperAdmin(req);
   const body = await readBody(req, 500_000);
-  const ward = await db.prepare("SELECT id FROM wards WHERE id = ?").get(Number(body.wardId));
+  const ward = await db.prepare("SELECT id, lga, name FROM wards WHERE id = ?").get(Number(body.wardId));
   if (!ward) throw new HttpError(404, "Ward not found.");
   const units = (Array.isArray(body.units) ? body.units : [])
     .map((u) => ({ name: clean(u.name, 200), code: clean(u.code, 40) }))
     .filter((u) => u.name);
   if (!units.length) throw new HttpError(400, "Type at least one polling unit.");
-  const results = await db.batch(units.map((u) => ["INSERT OR IGNORE INTO polling_units (ward_id, name, code) VALUES (?, ?, ?)", [ward.id, u.name, u.code]]));
-  const added = results.reduce((t, r) => t + r.rowsAffected, 0);
-  sendJson(res, 201, { added, skipped: units.length - added });
+  const existing = await db.prepare("SELECT id, name, code FROM polling_units WHERE ward_id = ?").all(ward.id);
+  const byCode = new Map(existing.filter((u) => u.code).map((u) => [u.code, u]));
+  const names = new Set(existing.map((u) => u.name));
+  const statements = [];
+  let added = 0;
+  let renamed = 0;
+  for (const u of units) {
+    const match = u.code && byCode.get(u.code);
+    if (match) {
+      if (match.name === u.name || names.has(u.name)) continue;
+      statements.push(...renameUnitStatements({ ...match, lga: ward.lga, ward: ward.name }, u.name));
+      names.delete(match.name);
+      names.add(u.name);
+      match.name = u.name;
+      renamed++;
+    } else if (!names.has(u.name)) {
+      statements.push(["INSERT INTO polling_units (ward_id, name, code) VALUES (?, ?, ?)", [ward.id, u.name, u.code]]);
+      names.add(u.name);
+      added++;
+    }
+  }
+  if (statements.length) await db.batch(statements);
+  sendJson(res, 201, { added, renamed, skipped: units.length - added - renamed });
+}
+
+async function renameUnit(req, res, id) {
+  await requireSuperAdmin(req);
+  const body = await readBody(req);
+  const name = clean(body.name, 200);
+  if (!name) throw new HttpError(400, "Type the polling unit's name.");
+  const unit = await db
+    .prepare("SELECT u.id, u.ward_id, u.name, w.lga, w.name AS ward FROM polling_units u JOIN wards w ON w.id = u.ward_id WHERE u.id = ?")
+    .get(id);
+  if (!unit) throw new HttpError(404, "Polling unit not found.");
+  if (name === unit.name) return sendJson(res, 200, { ok: true });
+  if (await db.prepare("SELECT 1 AS taken FROM polling_units WHERE ward_id = ? AND name = ? AND id != ?").get(unit.ward_id, name, id)) {
+    throw new HttpError(409, `${unit.ward} already has a polling unit called ${name}.`);
+  }
+  await db.batch(renameUnitStatements(unit, name));
+  sendJson(res, 200, { ok: true });
 }
 
 async function deleteWard(req, res, id) {
@@ -811,6 +860,7 @@ async function route(req, res) {
     const id = Number(idText);
     if (kind === "wards" && method === "DELETE") return deleteWard(req, res, id);
     if (kind === "units" && method === "DELETE") return deleteUnit(req, res, id);
+    if (kind === "units" && method === "PUT" && !action) return renameUnit(req, res, id);
     if (kind === "template" && method === "GET") return templateOwner(req, res, id);
     if (kind === "imports" && method === "POST" && action) return setImportStatus(req, res, id, action === "/approve" ? "approved" : "rejected");
   }

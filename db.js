@@ -190,6 +190,34 @@ async function addWardsOnce() {
   console.log("Added the wards of Adamawa State");
 }
 
+// Numbered polling units ("PU 001", "PU 002", …) for every listed ward that has none yet, as many as
+// the ward's polling unit count. Codes follow INEC's form: state (02 is Adamawa) / LGA / ward / unit.
+// The super admin renames them on the Locations page as the real names come in.
+async function addPollingUnitsOnce() {
+  const key = "pus_added_v1";
+  if (await db.prepare("SELECT 1 AS done FROM settings WHERE key = ?").get(key)) return;
+  const lgaCodes = Object.fromEntries(Object.keys(adamawaWards).map((lga, i) => [lga, String(i + 1).padStart(2, "0")]));
+  const wards = await db
+    .prepare(
+      `SELECT w.id, w.lga, w.code, w.expected_pus FROM wards w
+       WHERE w.expected_pus > 0 AND w.code != '' AND NOT EXISTS (SELECT 1 FROM polling_units u WHERE u.ward_id = w.id)`
+    )
+    .all();
+  const statements = wards
+    .filter((w) => lgaCodes[w.lga])
+    .map((w) => {
+      const args = [];
+      for (let n = 1; n <= w.expected_pus; n++) {
+        const num = String(n).padStart(3, "0");
+        args.push(w.id, `PU ${num}`, `02/${lgaCodes[w.lga]}/${w.code}/${num}`);
+      }
+      return [`INSERT OR IGNORE INTO polling_units (ward_id, name, code) VALUES ${Array(w.expected_pus).fill("(?, ?, ?)").join(", ")}`, args];
+    });
+  statements.push(["INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", [key, new Date().toISOString()]]);
+  await db.batch(statements);
+  console.log(`Added numbered polling units to ${wards.length} wards`);
+}
+
 // Creates the tables and the super admin the first time. Runs once per server start.
 let readyPromise = null;
 function ready(adminLogin, adminPassword) {
@@ -203,6 +231,7 @@ function ready(adminLogin, adminPassword) {
     if (!wardColumns.includes("code")) await client.execute("ALTER TABLE wards ADD COLUMN code TEXT NOT NULL DEFAULT ''");
     if (!wardColumns.includes("expected_pus")) await client.execute("ALTER TABLE wards ADD COLUMN expected_pus INTEGER");
     await addWardsOnce();
+    await addPollingUnitsOnce();
     // Ends the old 7-day sessions, which were stored unhashed and last longer than 10 minutes.
     await client.execute({ sql: "DELETE FROM sessions WHERE expires_at > ?", args: [Date.now() + 11 * 60 * 1000] });
     const admin = await db.prepare("SELECT id FROM people WHERE role = 'super_admin' LIMIT 1").get();

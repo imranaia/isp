@@ -1501,13 +1501,14 @@ function renderLocations() {
                     ${w.units
                       .map(
                         (u) => `<tr><td class="mono">${esc(u.code || "—")}</td><td class="wrap">${esc(u.name)}</td><td>${u.agents}</td>
-                        <td><button class="btn btn-danger" data-del-unit="${u.id}" data-name="${esc(u.name)}">Delete</button></td></tr>`
+                        <td><button class="btn btn-outline btn-small" data-rename-unit="${u.id}" data-name="${esc(u.name)}">Rename</button>
+                        <button class="btn btn-danger" data-del-unit="${u.id}" data-name="${esc(u.name)}">Delete</button></td></tr>`
                       )
                       .join("")}</tbody></table></div>`
                     : `<p class="muted">No polling units in this ward yet.</p>`
                 }
                 <form class="add-form" data-unit-form="${w.id}">
-                  <label><strong>Add polling units to ${esc(w.name)}</strong> <span class="muted">(one per line: code, name. The code is optional.)</span></label>
+                  <label><strong>Add or rename polling units in ${esc(w.name)}</strong> <span class="muted">(one per line: code, name. The code is optional. A line with a code already in the list renames that polling unit.)</span></label>
                   <textarea rows="3" placeholder="e.g.&#10;02/20/05/001, Doubeli Primary School&#10;02/20/05/002, Doubeli Market"></textarea>
                   <button class="btn btn-primary">+ Add polling units</button>
                 </form>
@@ -1562,7 +1563,10 @@ function renderLocations() {
         });
       try {
         const r = await api("/api/units", { method: "POST", body: { wardId: Number(form.dataset.unitForm), units } });
-        toast(`${r.added} polling unit(s) added${r.skipped ? `, ${r.skipped} already existed` : ""}`);
+        toast(
+          [r.added && `${r.added} polling unit(s) added`, r.renamed && `${r.renamed} renamed`, r.skipped && `${r.skipped} unchanged`].filter(Boolean).join(", ") ||
+            "Nothing to change"
+        );
         await loadLocations();
         renderLocations();
       } catch (err) {
@@ -1583,6 +1587,25 @@ function renderLocations() {
   };
   view.querySelectorAll("[data-del-ward]").forEach((b) => b.addEventListener("click", () => remove("wards", b.dataset.delWard, b.dataset.name)));
   view.querySelectorAll("[data-del-unit]").forEach((b) => b.addEventListener("click", () => remove("units", b.dataset.delUnit, b.dataset.name)));
+  view.querySelectorAll("[data-rename-unit]").forEach((b) =>
+    b.addEventListener("click", async () => {
+      const name = await ask({
+        title: `Rename ${b.dataset.name}`,
+        text: "Agents in charge of it and people registered at it move to the new name.",
+        okText: "Rename",
+        input: { type: "text", value: b.dataset.name, placeholder: "Polling unit name" },
+      });
+      if (!name || !name.trim() || name.trim() === b.dataset.name) return;
+      try {
+        await api(`/api/units/${b.dataset.renameUnit}`, { method: "PUT", body: { name: name.trim() } });
+        toast("Polling unit renamed");
+        await loadLocations();
+        renderLocations();
+      } catch (err) {
+        toast(err.message);
+      }
+    })
+  );
   document.getElementById("printLga").addEventListener("click", () => {
     const rows = lga.wards.flatMap((w) =>
       w.units.length ? w.units.map((u) => ({ ward: w.name, code: u.code, unit: u.name, agents: u.agents })) : [{ ward: w.name, code: "", unit: "(no polling units yet)", agents: "" }]
