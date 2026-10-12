@@ -1487,8 +1487,8 @@ function renderLocations() {
             <div class="ward-head">
               <button class="ward-toggle" data-ward="${w.id}" aria-expanded="${locState.openWard === w.id}">
                 <span class="chev">${locState.openWard === w.id ? "▾" : "▸"}</span>
-                <strong>${esc(w.name)}</strong>
-                <small>${w.units.length} polling unit${w.units.length === 1 ? "" : "s"} · ${w.agents} ward agent${w.agents === 1 ? "" : "s"}</small>
+                <strong>${w.code ? `<span class="mono muted">${esc(w.code)}</span> ` : ""}${esc(w.name)}</strong>
+                <small>${w.units.length}${w.expectedUnits ? ` of ${w.expectedUnits}` : ""} polling unit${(w.expectedUnits || w.units.length) === 1 ? "" : "s"} added · ${w.agents} ward agent${w.agents === 1 ? "" : "s"}</small>
               </button>
               <button class="btn btn-danger" data-del-ward="${w.id}" data-name="${esc(w.name)}">Delete</button>
             </div>

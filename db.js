@@ -6,6 +6,7 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 const defaultContent = require("./content-default");
+const adamawaWards = require("./adamawa-wards");
 
 function makeClient() {
   const url = process.env.TURSO_DATABASE_URL || process.env.DATABASE_URL;
@@ -164,6 +165,31 @@ async function resetAdminOnce() {
   console.log("Super admin login reset to: admin");
 }
 
+// Adds the 226 wards of Adamawa State (with their codes and number of polling units) the first time.
+// A ward already there with the same name only gets its code and polling unit count filled in,
+// so wards the super admin typed in by hand are never duplicated or removed.
+async function addWardsOnce() {
+  const key = "wards_added_v1";
+  if (await db.prepare("SELECT 1 AS done FROM settings WHERE key = ?").get(key)) return;
+  const statements = [];
+  for (const [lga, wards] of Object.entries(adamawaWards)) {
+    for (const [code, name, pus] of wards) {
+      // Names are matched ignoring capitals, so "BILLE" typed by hand counts as "Bille".
+      statements.push(
+        ["UPDATE wards SET code = ?, expected_pus = ? WHERE lga = ? AND name = ? COLLATE NOCASE", [code, pus, lga, name]],
+        [
+          "INSERT INTO wards (lga, name, code, expected_pus) SELECT ?, ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM wards WHERE lga = ? AND name = ? COLLATE NOCASE)",
+          [lga, name, code, pus, lga, name],
+        ]
+      );
+    }
+  }
+  // OR IGNORE: if two servers start at once, the second one's batch still succeeds.
+  statements.push(["INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", [key, new Date().toISOString()]]);
+  await db.batch(statements);
+  console.log("Added the wards of Adamawa State");
+}
+
 // Creates the tables and the super admin the first time. Runs once per server start.
 let readyPromise = null;
 function ready(adminLogin, adminPassword) {
@@ -173,6 +199,10 @@ function ready(adminLogin, adminPassword) {
     // Column added after the first version, for databases made before it existed.
     const columns = toObjects(await client.execute("PRAGMA table_info(people)")).map((c) => c.name);
     if (!columns.includes("import_id")) await client.execute("ALTER TABLE people ADD COLUMN import_id INTEGER");
+    const wardColumns = toObjects(await client.execute("PRAGMA table_info(wards)")).map((c) => c.name);
+    if (!wardColumns.includes("code")) await client.execute("ALTER TABLE wards ADD COLUMN code TEXT NOT NULL DEFAULT ''");
+    if (!wardColumns.includes("expected_pus")) await client.execute("ALTER TABLE wards ADD COLUMN expected_pus INTEGER");
+    await addWardsOnce();
     // Ends the old 7-day sessions, which were stored unhashed and last longer than 10 minutes.
     await client.execute({ sql: "DELETE FROM sessions WHERE expires_at > ?", args: [Date.now() + 11 * 60 * 1000] });
     const admin = await db.prepare("SELECT id FROM people WHERE role = 'super_admin' LIMIT 1").get();

@@ -416,7 +416,8 @@ async function setImportStatus(req, res, id, status) {
 async function locations(req, res) {
   await requireUser(req);
   const [wards, units, agentCounts] = await Promise.all([
-    db.prepare("SELECT id, lga, name FROM wards ORDER BY name").all(),
+    // Wards in code order (01, 02, …); wards added by hand without a code come after, by name.
+    db.prepare("SELECT id, lga, name, code, expected_pus FROM wards ORDER BY code = '', code, name").all(),
     db.prepare("SELECT id, ward_id, name, code FROM polling_units ORDER BY code, name").all(),
     db
       .prepare(
@@ -436,6 +437,8 @@ async function locations(req, res) {
       .map((w) => ({
         id: w.id,
         name: w.name,
+        code: w.code,
+        expectedUnits: w.expected_pus,
         agents: agents("ward_agent", lga, w.name),
         units: units.filter((u) => u.ward_id === w.id).map((u) => ({ ...u, agents: agents("pu_agent", lga, w.name, u.name) })),
       })),
