@@ -145,7 +145,7 @@ function checkPassword(password, stored) {
 // One-off reset of the super admin: when ADMIN_RESET_PASSWORD is set (on Vercel, never in the code),
 // the super admin signs in as "admin" with that password and is signed out everywhere.
 // It runs once per ADMIN_RESET_ID (remembered in settings), so later password changes from My Account stick.
-// Only the super admin's own row has role super_admin; nobody can add another, so there is one admin.
+// If there are several super admins, the first one (lowest id) is the one reset.
 async function resetAdminOnce() {
   const password = process.env.ADMIN_RESET_PASSWORD;
   if (!password) return;
@@ -218,6 +218,22 @@ async function addPollingUnitsOnce() {
   console.log(`Added numbered polling units to ${wards.length} wards`);
 }
 
+// Adds another super admin from EXTRA_ADMIN_LOGIN / EXTRA_ADMIN_PASSWORD (set on Vercel, never in the code),
+// if nobody has that login yet. Once the account exists the settings can be removed; changing them later
+// does nothing, so a password changed from My Account sticks.
+async function addExtraAdmin() {
+  const login = String(process.env.EXTRA_ADMIN_LOGIN || "").trim().toLowerCase();
+  const password = process.env.EXTRA_ADMIN_PASSWORD;
+  if (!login || !password) return;
+  if (await db.prepare("SELECT 1 AS taken FROM people WHERE login = ?").get(login)) return;
+  const name = process.env.EXTRA_ADMIN_NAME || process.env.EXTRA_ADMIN_LOGIN.trim();
+  // INSERT OR IGNORE: if two servers start at once, the login is still only created once.
+  await db
+    .prepare("INSERT OR IGNORE INTO people (role, full_name, login, password_hash, verified) VALUES ('super_admin', ?, ?, ?, 1)")
+    .run(name, login, hashPassword(password));
+  console.log(`Created super admin login: ${login}`);
+}
+
 // Creates the tables and the super admin the first time. Runs once per server start.
 let readyPromise = null;
 function ready(adminLogin, adminPassword) {
@@ -242,6 +258,7 @@ function ready(adminLogin, adminPassword) {
       console.log(`Created super admin login: ${adminLogin}`);
     }
     await resetAdminOnce();
+    await addExtraAdmin();
   })().catch((err) => {
     readyPromise = null;
     throw err;

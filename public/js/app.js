@@ -306,6 +306,7 @@ function showVerify() {
         <div class="bulk-actions">
           <button class="btn btn-primary" id="bulkBtn">Check all</button>
           <label class="btn btn-outline">⇪ Choose Excel file<input type="file" id="bulkFile" accept=".xlsx,.xls,.csv" hidden></label>
+          <button type="button" class="btn btn-ghost" id="bulkTemplate">⬇ Download template</button>
           <span class="hint" id="bulkCount" style="margin:0"></span>
         </div>
       </form>
@@ -371,6 +372,7 @@ function setupBulkVerify() {
     countEl.textContent = n ? `${n.toLocaleString()} VIN${n === 1 ? "" : "s"} in the list` : "";
   };
   box.addEventListener("input", showCount);
+  document.getElementById("bulkTemplate").addEventListener("click", downloadVinTemplate);
 
   document.getElementById("bulkFile").addEventListener("change", async (e) => {
     const file = e.target.files[0];
@@ -417,6 +419,38 @@ function setupBulkVerify() {
       btn.textContent = "Check all";
     }
   });
+}
+
+// An Excel file for collecting VINs to check at once: one voter per row. Only the VIN column is needed;
+// the name is shown beside each result.
+function downloadVinTemplate() {
+  if (!window.XLSX) return toast("The Excel tool is still loading. Try again in a moment.");
+  const columns = ["S/N", "Full Name", "VIN", "Phone", "Polling Unit"];
+  const sheet = XLSX.utils.aoa_to_sheet([
+    ["INDEPENDENT STRUCTURE PLATFORM (ISP) · VOTER'S CARD CHECK"],
+    ["Prepared by", state.user.full_name],
+    ["Area", scopeText(state.user)],
+    ["Date", new Date().toISOString().slice(0, 10)],
+    [],
+    columns,
+    ...Array.from({ length: 50 }, (_, i) => [i + 1]),
+  ]);
+  sheet["!cols"] = [{ wch: 6 }, { wch: 30 }, { wch: 26 }, { wch: 16 }, { wch: 30 }];
+  sheet["!merges"] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 4 } }];
+  const help = XLSX.utils.aoa_to_sheet([
+    ["How to fill this template"],
+    [""],
+    ["1. One voter per row, under the column names. Add more rows if you need them (up to 5,000)."],
+    ["2. VIN is required: the 19 letters and numbers printed on the voter's card. Spaces are ignored."],
+    ["3. Full Name, Phone and Polling Unit are optional; the name is shown beside each result."],
+    ["4. Do not change the column names row."],
+    ["5. Save the file, then on the Verify Voter's Card page click Choose Excel file and then Check all."],
+  ]);
+  help["!cols"] = [{ wch: 95 }];
+  const book = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(book, sheet, "VINs");
+  XLSX.utils.book_append_sheet(book, help, "Instructions");
+  XLSX.writeFile(book, "ISP-VIN-check-template.xlsx");
 }
 
 function bulkResultText(r) {

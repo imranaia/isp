@@ -162,6 +162,8 @@ async function currentUser(req) {
   }
   delete row.session_expires;
   row.session_token = hash;
+  // There can be more than one super admin, and each sees the whole state, not only the people they added.
+  if (row.role === "super_admin") row.path = "/";
   return row;
 }
 
@@ -568,7 +570,8 @@ async function templateOwner(req, res, id) {
 
 async function listPeople(req, res, url) {
   const user = await requireUser(req);
-  const where = ["p.path LIKE ?", "p.id != ?"];
+  // Super admins run the platform; they aren't part of the structure, so they never appear in these lists.
+  const where = ["p.path LIKE ?", "p.id != ?", "p.role != 'super_admin'"];
   const params = [`${user.path}%`, user.id];
 
   const role = url.searchParams.get("role");
@@ -619,8 +622,9 @@ async function listPeople(req, res, url) {
 
 async function deletePerson(req, res, id) {
   const user = await requireUser(req);
-  const target = await db.prepare("SELECT id, path, added_by FROM people WHERE id = ?").get(id);
+  const target = await db.prepare("SELECT id, role, path, added_by FROM people WHERE id = ?").get(id);
   if (!target || target.id === user.id || !target.path.startsWith(user.path)) throw new HttpError(404, "Person not found.");
+  if (target.role === "super_admin") throw new HttpError(403, "A super admin can't be removed.");
   const parent = await db.prepare("SELECT path FROM people WHERE id = ?").get(target.added_by);
   // All in one step: anyone this person added moves up to whoever added them, so nobody is lost.
   await db.batch([
@@ -640,6 +644,8 @@ async function resetPassword(req, res, id) {
   const target = await db.prepare("SELECT id, path, role, login, password_hash FROM people WHERE id = ?").get(id);
   const isSelf = target && target.id === user.id;
   if (!target || (!isSelf && !target.path.startsWith(user.path)) || target.role === "supporter") throw new HttpError(404, "Agent not found.");
+  // Each super admin changes only their own password (from My Account).
+  if (!isSelf && target.role === "super_admin") throw new HttpError(403, "Only that super admin can change their password.");
   // Changing your own password needs the current one, so an unattended screen can't be used to take over the account.
   if (isSelf && !checkPassword(String(body.currentPassword || ""), target.password_hash)) {
     throw new HttpError(400, "Your current password is wrong.");
@@ -666,17 +672,17 @@ async function stats(req, res) {
     ward_agent: { label: "polling unit", column: "COALESCE(NULLIF(assign_pu, ''), NULLIF(polling_unit, ''), 'Not set')" },
   }[user.role];
   const [roleCounts, verified, breakdown, thisWeek, recent] = await Promise.all([
-    db.prepare("SELECT role, COUNT(*) AS n FROM people WHERE path LIKE ? AND id != ? GROUP BY role").all(scope, user.id),
-    count("SELECT COUNT(*) AS n FROM people WHERE path LIKE ? AND id != ? AND verified = 1", scope, user.id),
+    db.prepare("SELECT role, COUNT(*) AS n FROM people WHERE path LIKE ? AND id != ? AND role != 'super_admin' GROUP BY role").all(scope, user.id),
+    count("SELECT COUNT(*) AS n FROM people WHERE path LIKE ? AND id != ? AND role != 'super_admin' AND verified = 1", scope, user.id),
     level
-      ? db.prepare(`SELECT ${level.column} AS name, COUNT(*) AS n FROM people WHERE path LIKE ? AND id != ? GROUP BY 1 ORDER BY n DESC`).all(scope, user.id)
+      ? db.prepare(`SELECT ${level.column} AS name, COUNT(*) AS n FROM people WHERE path LIKE ? AND id != ? AND role != 'super_admin' GROUP BY 1 ORDER BY n DESC`).all(scope, user.id)
       : [],
     count(
-      "SELECT COUNT(*) AS n FROM people WHERE path LIKE ? AND id != ? AND role = 'supporter' AND created_at >= datetime('now', '-7 days')",
+      "SELECT COUNT(*) AS n FROM people WHERE path LIKE ? AND id != ? AND role != 'super_admin' AND role = 'supporter' AND created_at >= datetime('now', '-7 days')",
       scope,
       user.id
     ),
-    db.prepare(`SELECT ${PUBLIC_FIELDS} FROM people WHERE path LIKE ? AND id != ? ORDER BY id DESC LIMIT 8`).all(scope, user.id),
+    db.prepare(`SELECT ${PUBLIC_FIELDS} FROM people WHERE path LIKE ? AND id != ? AND role != 'super_admin' ORDER BY id DESC LIMIT 8`).all(scope, user.id),
   ]);
   const counts = Object.fromEntries(roleCounts.map((r) => [r.role, r.n]));
   const lgaAgents = counts.lga_agent || 0;
