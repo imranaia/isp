@@ -1,5 +1,6 @@
 // The wards of every local government in Adamawa State: [ward code, ward name, number of polling units].
-// From the campaign structure document ("Rufai Structure"), 226 wards in all.
+// From the campaign structure document ("Rufai Structure"), 226 wards in all. The codes and polling unit
+// counts follow INEC's polling unit list (PUS.xlsx, see adamawa-pus.js).
 // The local government names match ADAMAWA_LGAS in server.js. They are listed in the order of their
 // INEC codes (Demsa 01 … Yola South 21), which db.js uses to build polling unit codes, so keep this order.
 
@@ -13,7 +14,7 @@ module.exports = {
     ["07", "Pariya", 32], ["08", "Ribadu", 24], ["09", "Uki Tuki", 10], ["10", "Wuro Bokki", 25], ["11", "Tadim", 13],
   ],
   Ganye: [
-    ["01", "Bakari Guso", 13], ["02", "Gamu", 10], ["03", "Ganye I", 33], ["04", "Ganye II", 27], ["05", "Gurum", 20],
+    ["01", "Bakari Guso", 13], ["02", "Gamu", 10], ["03", "Ganye I", 33], ["04", "Ganye II", 28], ["05", "Gurum", 20],
     ["06", "Jaggu", 11], ["07", "Sangasumi", 20], ["08", "Sugu", 21], ["09", "Timdore", 23], ["10", "Yebbi", 19],
   ],
   Girei: [
@@ -29,16 +30,16 @@ module.exports = {
     ["06", "Dumna", 15], ["07", "Guyuk", 28], ["08", "Kola", 15], ["09", "Lokoro", 9], ["10", "Purokyayo", 9],
   ],
   Hong: [
-    ["01", "Bangshika", 45], ["02", "Daksiri", 17], ["03", "Garaha", 15], ["04", "Gaya", 21], ["05", "Hildi", 15], ["06", "Hong", 33],
-    ["07", "Hushere Zum", 18], ["08", "Kwarhi", 11], ["09", "Mayo Lope", 12], ["10", "Shangui", 13], ["11", "Thilbang", 13], ["12", "Uba", 21],
+    ["01", "Bangshika", 25], ["02", "Daksiri", 17], ["03", "Garaha", 15], ["04", "Gaya", 21], ["05", "Hildi", 15], ["06", "Hong", 33],
+    ["07", "Hushere Zum", 18], ["08", "Kwarhi", 11], ["09", "Mayo Lope", 12], ["10", "Shangui", 13], ["11", "Thilbang", 24], ["12", "Uba", 21],
   ],
   Jada: [
-    ["01", "Danaba", 25], ["02", "Jada I", 30], ["03", "Jada II", 22], ["04", "Kima I", 18], ["05", "Kima II", 13], ["06", "Leko", 21],
-    ["07", "Mapeo", 17], ["08", "Mayo Kalaye", 15], ["09", "Mbulu", 24], ["10", "Nyibango", 15], ["11", "Yelli", 15],
+    ["01", "Danaba", 14], ["02", "Jada I", 30], ["03", "Jada II", 22], ["04", "Kima I", 18], ["05", "Kima II", 13], ["06", "Leko", 21],
+    ["07", "Mapeo", 17], ["08", "Mayo Kalaye", 15], ["09", "Mbulu", 24], ["10", "Nyibango", 19], ["11", "Yelli", 22],
   ],
   Lamurde: [
-    ["01", "Dubwangun", 11], ["02", "Gyawana", 20], ["03", "Lafiya", 21], ["04", "Lamurde", 21], ["05", "Mgbebongun", 9],
-    ["06", "Bgbakowa", 10], ["07", "Opalo", 10], ["08", "Rigange", 9], ["09", "Suwa", 23], ["10", "Waduku", 18],
+    ["01", "Dubwangun", 11], ["02", "Gyawana", 20], ["03", "Lafiya", 21], ["04", "Lamurde", 21], ["05", "Mgbebongun", 7],
+    ["06", "Bgbakowa", 12], ["07", "Opalo", 10], ["08", "Rigange", 9], ["09", "Suwa", 23], ["10", "Waduku", 18],
   ],
   Madagali: [
     ["01", "Babel", 8], ["02", "Duhu/Shuwa", 19], ["03", "Gulak", 31], ["04", "Hyambula", 12], ["05", "K/Wuro Nyayandi", 12],
@@ -49,7 +50,7 @@ module.exports = {
     ["06", "Mayonguli", 22], ["07", "Pakka", 11], ["08", "Sorau A", 9], ["09", "Sorau B", 12], ["10", "Tambajam", 9],
   ],
   "Mayo Belwa": [
-    ["01", "Bajama", 10], ["02", "Binyeri", 14], ["03", "Gangfada", 13], ["04", "Gangle", 51], ["05", "Gorobi", 22], ["06", "Mayo Belwa", 51],
+    ["01", "Bajama", 10], ["02", "Binyeri", 13], ["03", "Gangfada", 14], ["04", "Gangle", 12], ["05", "Gorobi", 13], ["06", "Mayo Belwa", 51],
     ["07", "Mayo Farang", 22], ["08", "Nassarawo Jereng", 14], ["09", "Ndikong", 16], ["10", "Ribadu", 8], ["11", "Tola", 18], ["12", "Yoffo", 15],
   ],
   Michika: [
@@ -72,11 +73,11 @@ module.exports = {
   ],
   Shelleng: [
     ["01", "Bakta", 6], ["02", "Bodwai", 13], ["03", "Gundo", 19], ["04", "Gwapopolok", 8], ["05", "Jumbul", 11],
-    ["06", "Ketembere", 12], ["07", "Kiri", 9], ["08", "Libbo", 15], ["09", "Shelleng", 26], ["10", "Tallum", 6],
+    ["06", "Ketembere", 12], ["07", "Kiri", 9], ["08", "Libbo", 15], ["09", "Shelleng", 25], ["10", "Tallum", 6],
   ],
   Song: [
     ["01", "Dirma", 19], ["02", "Dumne", 24], ["03", "Gudu Mboi", 10], ["04", "Kilange Fung", 14], ["05", "Kilange Hirna", 10], ["06", "Sigire", 16],
-    ["07", "Sukutu", 19], ["08", "Song Gari", 46], ["09", "Song Waje", 20], ["10", "Waltandi", 15], ["11", "Zuma", 13],
+    ["07", "Sukutu", 20], ["08", "Song Gari", 46], ["09", "Song Waje", 20], ["10", "Waltandi", 15], ["11", "Zuma", 13],
   ],
   Toungo: [
     ["01", "Dawo I", 9], ["02", "Dawo II", 10], ["03", "Gumti", 9], ["04", "Kiri I", 11], ["05", "Kiri II", 8],
@@ -88,6 +89,6 @@ module.exports = {
   ],
   "Yola South": [
     ["01", "Adarawo", 24], ["02", "Bako", 23], ["03", "Bole/Yolde Pate", 40], ["04", "Namtazi", 27], ["05", "Ngurore", 31], ["06", "Makama A", 30],
-    ["07", "Makama B", 23], ["08", "Mbamoi", 17], ["09", "Mba Mba", 22], ["10", "Toungo", 20], ["11", "Yolde Kohi", 15],
+    ["07", "Makama B", 23], ["08", "Mba Mba", 22], ["09", "Mbamoi", 17], ["10", "Toungo", 20], ["11", "Yolde Kohi", 15],
   ],
 };

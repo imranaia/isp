@@ -7,6 +7,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const defaultContent = require("./content-default");
 const adamawaWards = require("./adamawa-wards");
+const adamawaUnits = require("./adamawa-pus");
 
 function makeClient() {
   const url = process.env.TURSO_DATABASE_URL || process.env.DATABASE_URL;
@@ -218,6 +219,70 @@ async function addPollingUnitsOnce() {
   console.log(`Added numbered polling units to ${wards.length} wards`);
 }
 
+// Puts INEC's real polling unit names (adamawa-pus.js) in place of the numbered ones ("PU 001", …),
+// sets each ward's code and polling unit count to INEC's, adds units a ward is missing, and removes
+// numbered units beyond INEC's count that nobody has chosen. Units the super admin already renamed
+// are left alone, and people who chose a numbered unit move to its real name.
+// Runs one local government at a time; running it again finds nothing left to do.
+async function nameUnitsOnce() {
+  const key = "pu_names_v1";
+  if (await db.prepare("SELECT 1 AS done FROM settings WHERE key = ?").get(key)) return;
+  const numberedName = /^PU \d{3}$/;
+  const used = new Set(
+    (
+      await db
+        .prepare(
+          `SELECT lga, ward, polling_unit AS pu FROM people WHERE polling_unit LIKE 'PU %'
+           UNION SELECT assign_lga, assign_ward, assign_pu FROM people WHERE assign_pu LIKE 'PU %'`
+        )
+        .all()
+    ).map((r) => `${r.lga}|${r.ward}|${r.pu}`)
+  );
+  for (const [i, lga] of Object.keys(adamawaWards).entries()) {
+    const lgaCode = String(i + 1).padStart(2, "0");
+    const wards = await db.prepare("SELECT id, name FROM wards WHERE lga = ?").all(lga);
+    const statements = [];
+    for (const [code, wardName] of adamawaWards[lga]) {
+      const names = adamawaUnits[`${lgaCode}-${code}`];
+      const ward = wards.find((w) => w.name.toLowerCase() === wardName.toLowerCase());
+      if (!names || !ward) continue;
+      statements.push(["UPDATE wards SET code = ?, expected_pus = ? WHERE id = ?", [code, names.length, ward.id]]);
+      const units = await db.prepare("SELECT id, name, code FROM polling_units WHERE ward_id = ?").all(ward.id);
+      const taken = new Set(units.map((u) => u.name.toUpperCase()));
+      const isUsed = (name) => used.has(`${lga}|${ward.name}|${name}`);
+      names.forEach((name, n) => {
+        const num = String(n + 1).padStart(3, "0");
+        const unitCode = `02/${lgaCode}/${code}/${num}`;
+        const numbered = units.find((u) => u.name === `PU ${num}`);
+        if (taken.has(name.toUpperCase())) return;
+        if (numbered) {
+          statements.push(["UPDATE polling_units SET name = ?, code = ? WHERE id = ?", [name, unitCode, numbered.id]]);
+          if (isUsed(numbered.name)) {
+            statements.push(
+              ["UPDATE people SET assign_pu = ? WHERE assign_lga = ? AND assign_ward = ? AND assign_pu = ?", [name, lga, ward.name, numbered.name]],
+              [
+                "UPDATE people SET polling_unit = ?, polling_unit_code = ? WHERE lga = ? AND ward = ? AND polling_unit = ?",
+                [name, unitCode, lga, ward.name, numbered.name],
+              ]
+            );
+          }
+          numbered.renamed = true;
+        } else if (!units.some((u) => u.code === unitCode && !numberedName.test(u.name))) {
+          // Skipped when the super admin already gave this code a name of their own.
+          statements.push(["INSERT OR IGNORE INTO polling_units (ward_id, name, code) VALUES (?, ?, ?)", [ward.id, name, unitCode]]);
+        }
+        taken.add(name.toUpperCase());
+      });
+      for (const u of units) {
+        if (!u.renamed && numberedName.test(u.name) && !isUsed(u.name)) statements.push(["DELETE FROM polling_units WHERE id = ?", [u.id]]);
+      }
+    }
+    if (statements.length) await db.batch(statements);
+  }
+  await db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)").run(key, new Date().toISOString());
+  console.log("Named the polling units from INEC's list");
+}
+
 // Adds another super admin from EXTRA_ADMIN_LOGIN / EXTRA_ADMIN_PASSWORD (set on Vercel, never in the code),
 // if nobody has that login yet. Once the account exists the settings can be removed; changing them later
 // does nothing, so a password changed from My Account sticks.
@@ -248,6 +313,7 @@ function ready(adminLogin, adminPassword) {
     if (!wardColumns.includes("expected_pus")) await client.execute("ALTER TABLE wards ADD COLUMN expected_pus INTEGER");
     await addWardsOnce();
     await addPollingUnitsOnce();
+    await nameUnitsOnce();
     // Ends the old 7-day sessions, which were stored unhashed and last longer than 10 minutes.
     await client.execute({ sql: "DELETE FROM sessions WHERE expires_at > ?", args: [Date.now() + 11 * 60 * 1000] });
     const admin = await db.prepare("SELECT id FROM people WHERE role = 'super_admin' LIMIT 1").get();
