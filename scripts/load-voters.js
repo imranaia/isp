@@ -86,7 +86,7 @@ async function main() {
     const sectionKey = `${lga}|${ward}|${pu}`;
     if (serial === "1" || !sections.has(sectionKey)) sections.set(sectionKey, (sections.get(sectionKey) || 0) + 1);
     const vin = normalVin(String(rawVin || "").trim().toUpperCase());
-    if (!/^[A-Z0-9]{18,20}$/.test(vin) || !fullName) {
+    if (!/^[A-Z0-9]{18,21}$/.test(vin) || !fullName) {
       skipped++;
       continue;
     }

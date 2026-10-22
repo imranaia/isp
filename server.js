@@ -48,8 +48,8 @@ const CAN_ADD = {
   supporter: [],
 };
 
-// Most VINs are 19 letters and numbers; newer ones ("INC2…") are 20, and a few older ones 18.
-const VIN_PATTERN = /^[A-Z0-9]{18,20}$/;
+// Most VINs are 19 letters and numbers; newer ones ("INC2…") are 20, and a few are 18 or 21.
+const VIN_PATTERN = /^[A-Z0-9]{18,21}$/;
 const VIN_RULE = "19 or 20 letters and numbers";
 
 const PUBLIC_FIELDS =

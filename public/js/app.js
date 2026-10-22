@@ -269,9 +269,9 @@ async function showDashboard() {
 
 // ---------- verify VIN ----------
 
-// Most VINs are 19 letters and numbers; newer ones ("INC2…") are 20, and a few older ones 18.
+// Most VINs are 19 letters and numbers; newer ones ("INC2…") are 20, and a few are 18 or 21.
 // Some lists print a 19-character VIN with "00" in front; the card itself has the 19 characters.
-const VIN_PATTERN = /^[A-Z0-9]{18,20}$/;
+const VIN_PATTERN = /^[A-Z0-9]{18,21}$/;
 function cleanVin(value) {
   const vin = String(value || "").replace(/\s+/g, "").toUpperCase();
   return vin.length === 21 && vin.startsWith("00") ? vin.slice(2) : vin;
