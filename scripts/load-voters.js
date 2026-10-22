@@ -21,6 +21,8 @@ if (!file) {
 
 const key = (s) => String(s).toUpperCase().replace(/[^A-Z0-9]/g, "");
 const LGA_ALIASES = { GUYUK: "Gayuk" };
+// Wards our list spells differently from the register (register spelling -> ours).
+const WARD_ALIASES = { KARLAHI: "Harlahi", KILANGEFUNA: "Kilange Fung", DILLI: "Dili" };
 
 // Our local governments, each with its wards and their polling units, to match the register's names against.
 const lgas = new Map();
@@ -56,12 +58,13 @@ function matchArea(lgaText, wardText, puText, occurrence) {
     if (!candidates.length && k.length >= 8) {
       candidates = [...lga.units].filter(([name]) => name.startsWith(k) || k.startsWith(name)).flatMap(([, units]) => units);
     }
-    const sameWard = candidates.filter((u) => key(u.ward) === key(wardText));
+    const wardKey = key(WARD_ALIASES[key(wardText)] || wardText);
+    const sameWard = candidates.filter((u) => key(u.ward) === wardKey);
     const choices = sameWard.length ? sameWard : candidates;
     const oneWard = new Set(choices.map((u) => u.ward)).size === 1;
     const unit = choices.length === 1 ? choices[0] : oneWard ? choices[occurrence - 1] : null;
     if (unit) area = { lga: lga.name, ward: unit.ward, polling_unit: unit.name, polling_unit_code: unit.code, matched: true };
-    else if (lga.wards.has(key(wardText))) area.ward = lga.wards.get(key(wardText));
+    else if (lga.wards.has(wardKey)) area.ward = lga.wards.get(wardKey);
   }
   areaCache.set(cacheKey, area);
   return area;
