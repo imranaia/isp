@@ -382,6 +382,7 @@ const BULK_STATUS = {
   registered: "Already registered",
   found: "In voter register",
   notfound: "Not in register",
+  awaiting: "Awaiting INEC",
 };
 
 function setupBulkVerify() {
@@ -512,6 +513,7 @@ function bulkResultText(r) {
   if (r.status === "repeat") return "Appears more than once in this list.";
   if (r.status === "registered") return r.role ? `In the system as ${ROLE_LABEL[r.role]}: ${r.full_name}` : "Already registered in another area.";
   if (r.status === "found") return `Registered at ${place}${r.polling_unit_code ? ` (${r.polling_unit_code})` : ""}.`;
+  if (r.status === "awaiting") return "Format correct. Not yet checked against the INEC register.";
   return "Not found in the Adamawa State voter register.";
 }
 
@@ -526,6 +528,7 @@ function renderBulkResults(out, results, message, remaining) {
         .join("")}
       ${remaining == null ? "" : `<span class="hint" style="margin:0">${esc(remainingText(remaining))}</span>`}
     </div>
+    ${counts.awaiting ? `<div class="alert alert-warn">${esc(message)}</div>` : ""}
     ${counts.notfound ? `<div class="alert alert-warn">${counts.notfound.toLocaleString()} VIN${counts.notfound === 1 ? " is" : "s are"} not in the Adamawa State voter register. Check them against the voter's card.</div>` : ""}
     <div class="bulk-actions" style="margin-bottom:12px">
       <button class="btn btn-outline btn-small" id="bulkExport">Export Excel</button>
@@ -554,7 +557,7 @@ function renderBulkResults(out, results, message, remaining) {
     XLSX.writeFile(book, `ISP-VIN-check-${new Date().toISOString().slice(0, 10)}.xlsx`);
   });
   document.getElementById("bulkPrint").addEventListener("click", () =>
-    printReport({ title: "VIN check", columns, rows: results, note: "" })
+    printReport({ title: "VIN check", columns, rows: results, note: counts.awaiting ? message : "" })
   );
 }
 

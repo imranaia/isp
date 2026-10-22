@@ -406,3 +406,4 @@ textarea:focus { outline: 2px solid var(--green-500); border-color: transparent;
 .pill-registered { background: #e3efff; color: #1d4f91; }
 .pill-found { background: var(--green-100); color: var(--green-700); }
 .pill-notfound { background: #f2f2f2; color: #555; }
+.pill-awaiting { background: #f2f2f2; color: #555; }

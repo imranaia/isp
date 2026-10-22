@@ -193,6 +193,12 @@ async function count(sql, ...args) {
 const VOTER_FIELDS = "vin, full_name, gender, birth_year, lga, ward, polling_unit, polling_unit_code";
 const NOT_IN_REGISTER = "This VIN is not in the Adamawa State voter register. Check the number on the voter's card.";
 
+// The register lookup stays switched off until INEC approves it: set VIN_REGISTER_ENABLED=1 on Vercel
+// (and redeploy) to switch it on. While it is off, every VIN check says it is awaiting INEC's approval;
+// the register itself stays loaded in the voters table, ready for when it is switched on.
+const REGISTER_ENABLED = ["1", "true", "yes", "on"].includes(String(process.env.VIN_REGISTER_ENABLED || "").toLowerCase());
+const VERIFY_UNAVAILABLE = "Verification Failed: System integration is currently awaiting INEC's Admin Approval.";
+
 // Each agent can look up this many VINs a day (single and bulk checks together), so nobody can copy
 // the register by trying VINs in bulk. Super admins have no limit; every lookup is logged either way.
 const VIN_DAILY_LIMIT = Number(process.env.VIN_DAILY_LIMIT) || 2000;
@@ -234,6 +240,7 @@ async function verifyVin(req, res) {
   const body = await readBody(req);
   const vin = cleanVin(body.vin);
   if (!VIN_PATTERN.test(vin)) throw new HttpError(400, `A VIN is ${VIN_RULE}. Check the number on the voter's card.`);
+  if (!REGISTER_ENABLED) throw new HttpError(503, VERIFY_UNAVAILABLE);
   const remaining = await checkLookupLimit(user, 1);
   const row = await db.prepare(`SELECT ${VOTER_FIELDS} FROM voters WHERE vin = ?`).get(vin);
   await logLookup(user, "single", 1, row ? 1 : 0);
@@ -255,7 +262,8 @@ async function verifyVins(req, res) {
   const list = (Array.isArray(body.vins) ? body.vins : []).slice(0, 5000).map(cleanVin);
   if (!list.some(Boolean)) throw new HttpError(400, "Add at least one VIN.");
   const valid = [...new Set(list.filter((v) => VIN_PATTERN.test(v)))];
-  const remaining = await checkLookupLimit(user, valid.length);
+  // Without the register, only the format, repeats and people already in the system are checked.
+  const remaining = REGISTER_ENABLED ? await checkLookupLimit(user, valid.length) : null;
   const found = new Map();
   const voters = new Map();
   for (let i = 0; i < valid.length; i += 400) {
@@ -263,6 +271,7 @@ async function verifyVins(req, res) {
     const marks = chunk.map(() => "?").join(",");
     const rows = await db.prepare(`SELECT vin, full_name, role, path FROM people WHERE vin IN (${marks})`).all(...chunk);
     for (const r of rows) found.set(r.vin, r);
+    if (!REGISTER_ENABLED) continue;
     const listed = await db.prepare(`SELECT ${VOTER_FIELDS} FROM voters WHERE vin IN (${marks})`).all(...chunk);
     for (const v of listed) voters.set(v.vin, v);
   }
@@ -276,10 +285,11 @@ async function verifyVins(req, res) {
     const place = voter ? { voter_name: voter.full_name, lga: voter.lga, ward: voter.ward, polling_unit: voter.polling_unit, polling_unit_code: voter.polling_unit_code } : {};
     // Names are only shown for people in your own structure.
     if (person) return person.path.startsWith(user.path) ? { vin, status: "registered", role: person.role, full_name: person.full_name, ...place } : { vin, status: "registered", ...place };
+    if (!REGISTER_ENABLED) return { vin, status: "awaiting" };
     return voter ? { vin, status: "found", ...place } : { vin, status: "notfound" };
   });
-  if (valid.length) await logLookup(user, "bulk", valid.length, voters.size);
-  sendJson(res, 200, { results, message: NOT_IN_REGISTER, remaining });
+  if (REGISTER_ENABLED && valid.length) await logLookup(user, "bulk", valid.length, voters.size);
+  sendJson(res, 200, { results, message: REGISTER_ENABLED ? NOT_IN_REGISTER : VERIFY_UNAVAILABLE, remaining });
 }
 
 // For the super admin: how many VINs each agent has checked today, and the latest lookups.
