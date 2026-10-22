@@ -193,6 +193,11 @@ async function requireSuperAdmin(req) {
   return user;
 }
 
+// The root admin (people.hidden = 1) is seen by nobody but themselves: where their name would show,
+// others see this instead, and their account answers "not found" to anyone else.
+const HIDDEN_NAME = "Admin";
+const isHiddenFrom = (person, user) => Boolean(person && person.hidden && person.id !== user.id);
+
 async function count(sql, ...args) {
   return (await db.prepare(sql).get(...args)).n;
 }
@@ -258,9 +263,10 @@ async function verifyVin(req, res) {
   const { birth_year, ...voter } = row;
   voter.state = "Adamawa";
   if (birth_year) voter.birth_year = birth_year;
-  const person = await db.prepare("SELECT full_name, role, path FROM people WHERE vin = ?").get(vin);
-  // Who has the VIN is only shown for people in your own structure.
-  const alreadyRegistered = person && (person.path.startsWith(user.path) ? { role: person.role, full_name: person.full_name } : { elsewhere: true });
+  const person = await db.prepare("SELECT id, full_name, role, path, hidden FROM people WHERE vin = ?").get(vin);
+  // Who has the VIN is only shown for people in your own structure (never the root admin).
+  const alreadyRegistered =
+    person && (person.path.startsWith(user.path) && !isHiddenFrom(person, user) ? { role: person.role, full_name: person.full_name } : { elsewhere: true });
   sendJson(res, 200, { voter, alreadyRegistered: alreadyRegistered || null, remaining });
 }
 
@@ -279,7 +285,7 @@ async function verifyVins(req, res) {
   for (let i = 0; i < valid.length; i += 400) {
     const chunk = valid.slice(i, i + 400);
     const marks = chunk.map(() => "?").join(",");
-    const rows = await db.prepare(`SELECT vin, full_name, role, path FROM people WHERE vin IN (${marks})`).all(...chunk);
+    const rows = await db.prepare(`SELECT id, vin, full_name, role, path, hidden FROM people WHERE vin IN (${marks})`).all(...chunk);
     for (const r of rows) found.set(r.vin, r);
     if (!REGISTER_ENABLED) continue;
     const listed = await db.prepare(`SELECT ${VOTER_FIELDS} FROM voters WHERE vin IN (${marks})`).all(...chunk);
@@ -294,7 +300,10 @@ async function verifyVins(req, res) {
     const voter = voters.get(vin);
     const place = voter ? { voter_name: voter.full_name, lga: voter.lga, ward: voter.ward, polling_unit: voter.polling_unit, polling_unit_code: voter.polling_unit_code } : {};
     // Names are only shown for people in your own structure.
-    if (person) return person.path.startsWith(user.path) ? { vin, status: "registered", role: person.role, full_name: person.full_name, ...place } : { vin, status: "registered", ...place };
+    if (person) {
+      const named = person.path.startsWith(user.path) && !isHiddenFrom(person, user);
+      return named ? { vin, status: "registered", role: person.role, full_name: person.full_name, ...place } : { vin, status: "registered", ...place };
+    }
     if (!REGISTER_ENABLED) return { vin, status: "awaiting" };
     return voter ? { vin, status: "found", ...place } : { vin, status: "syncing" };
   });
@@ -304,17 +313,18 @@ async function verifyVins(req, res) {
 
 // For the super admin: how many VINs each agent has checked today, and the latest lookups.
 async function listLookups(req, res) {
-  await requireSuperAdmin(req);
+  const user = await requireSuperAdmin(req);
+  const visible = "(p.hidden IS NULL OR p.hidden = 0 OR p.id = ?)";
   const who = "p.full_name, p.role, p.assign_lga, p.assign_ward, p.assign_pu";
   const today = await db
     .prepare(
       `SELECT ${who}, SUM(l.vins) AS vins, SUM(l.found) AS found, COUNT(*) AS lookups FROM vin_lookups l
-       LEFT JOIN people p ON p.id = l.person_id WHERE l.created_at >= ? GROUP BY l.person_id ORDER BY vins DESC LIMIT 200`
+       LEFT JOIN people p ON p.id = l.person_id WHERE l.created_at >= ? AND ${visible} GROUP BY l.person_id ORDER BY vins DESC LIMIT 200`
     )
-    .all(startOfToday());
+    .all(startOfToday(), user.id);
   const recent = await db
-    .prepare(`SELECT ${who}, l.kind, l.vins, l.found, l.created_at FROM vin_lookups l LEFT JOIN people p ON p.id = l.person_id ORDER BY l.id DESC LIMIT 200`)
-    .all();
+    .prepare(`SELECT ${who}, l.kind, l.vins, l.found, l.created_at FROM vin_lookups l LEFT JOIN people p ON p.id = l.person_id WHERE ${visible} ORDER BY l.id DESC LIMIT 200`)
+    .all(user.id);
   sendJson(res, 200, { today, recent, limit: VIN_DAILY_LIMIT });
 }
 
@@ -383,8 +393,8 @@ function personRow(creator, role, person, extra = {}) {
 async function insertPerson(creator, role, person, extra = {}) {
   const values = personRow(creator, role, person, extra);
   if (person.vin) {
-    const existing = await db.prepare("SELECT full_name FROM people WHERE vin = ?").get(person.vin);
-    if (existing) throw new HttpError(409, `VIN ${person.vin} is already registered (${existing.full_name}).`);
+    const existing = await db.prepare("SELECT id, full_name, hidden FROM people WHERE vin = ?").get(person.vin);
+    if (existing) throw new HttpError(409, `VIN ${person.vin} is already registered (${isHiddenFrom(existing, creator) ? HIDDEN_NAME : existing.full_name}).`);
   }
   // The database fills in "path" from the person who added them (see the trigger in db.js).
   const result = await db.prepare(INSERT_PERSON_SQL).run(...values);
@@ -433,9 +443,9 @@ async function importPeople(req, res) {
   let owner = user;
   if (body.ownerId && Number(body.ownerId) !== user.id) {
     owner = await db
-      .prepare("SELECT id, role, full_name, path, assign_lga, assign_ward, assign_pu FROM people WHERE id = ?")
+      .prepare("SELECT id, role, full_name, path, hidden, assign_lga, assign_ward, assign_pu FROM people WHERE id = ?")
       .get(Number(body.ownerId));
-    if (!owner || owner.role === "supporter" || !owner.path.startsWith(user.path)) {
+    if (!owner || owner.role === "supporter" || isHiddenFrom(owner, user) || !owner.path.startsWith(user.path)) {
       throw new HttpError(403, "This template belongs to an agent outside your area. Ask that agent or the super admin to upload it.");
     }
   }
@@ -462,8 +472,8 @@ async function importPeople(req, res) {
   const existing = new Map();
   for (let i = 0; i < vins.length; i += 400) {
     const chunk = vins.slice(i, i + 400);
-    const found = await db.prepare(`SELECT vin, full_name FROM people WHERE vin IN (${chunk.map(() => "?").join(",")})`).all(...chunk);
-    for (const f of found) existing.set(f.vin, f.full_name);
+    const found = await db.prepare(`SELECT id, vin, full_name, hidden FROM people WHERE vin IN (${chunk.map(() => "?").join(",")})`).all(...chunk);
+    for (const f of found) existing.set(f.vin, isHiddenFrom(f, user) ? HIDDEN_NAME : f.full_name);
   }
   const toInsert = people.filter(({ person, rowNumber }) => {
     if (person.vin && existing.has(person.vin)) {
@@ -497,13 +507,16 @@ async function listImports(req, res) {
   const user = await requireUser(req);
   const rows = await db
     .prepare(
-      `SELECT i.*, u.full_name AS uploaded_by_name FROM imports i
+      `SELECT i.*,
+         CASE WHEN o.hidden = 1 AND o.id != ? THEN '${HIDDEN_NAME}' ELSE i.owner_name END AS owner_name,
+         CASE WHEN u.hidden = 1 AND u.id != ? THEN '${HIDDEN_NAME}' ELSE u.full_name END AS uploaded_by_name
+       FROM imports i
        LEFT JOIN people o ON o.id = i.owner_id
        LEFT JOIN people u ON u.id = i.uploaded_by
        WHERE o.path LIKE ? OR i.uploaded_by = ?
        ORDER BY i.id DESC LIMIT 500`
     )
-    .all(`${user.path}%`, user.id);
+    .all(user.id, user.id, `${user.path}%`, user.id);
   sendJson(res, 200, { rows });
 }
 
@@ -663,11 +676,12 @@ async function deleteUnit(req, res, id) {
 // The agent an Excel template is made for: yourself, or someone under you.
 async function templateOwner(req, res, id) {
   const user = await requireUser(req);
-  const person = await db.prepare(`SELECT ${PUBLIC_FIELDS}, path FROM people WHERE id = ?`).get(id);
-  if (!person || person.role === "supporter" || (person.id !== user.id && !person.path.startsWith(user.path))) {
+  const person = await db.prepare(`SELECT ${PUBLIC_FIELDS}, path, hidden FROM people WHERE id = ?`).get(id);
+  if (!person || person.role === "supporter" || isHiddenFrom(person, user) || (person.id !== user.id && !person.path.startsWith(user.path))) {
     throw new HttpError(404, "Agent not found.");
   }
   delete person.path;
+  delete person.hidden;
   sendJson(res, 200, { person });
 }
 
@@ -713,20 +727,20 @@ async function listPeople(req, res, url) {
     count(`SELECT COUNT(*) AS n FROM people p WHERE ${whereSql}`, ...params),
     db
       .prepare(
-        `SELECT ${PREFIXED_FIELDS}, a.full_name AS added_by_name
+        `SELECT ${PREFIXED_FIELDS}, CASE WHEN a.hidden = 1 AND a.id != ? THEN '${HIDDEN_NAME}' ELSE a.full_name END AS added_by_name
          FROM people p LEFT JOIN people a ON a.id = p.added_by
          WHERE ${whereSql}
          ORDER BY p.id DESC LIMIT ? OFFSET ?`
       )
-      .all(...params, pageSize, (page - 1) * pageSize),
+      .all(user.id, ...params, pageSize, (page - 1) * pageSize),
   ]);
   sendJson(res, 200, { total, page, pageSize, rows });
 }
 
 async function deletePerson(req, res, id) {
   const user = await requireUser(req);
-  const target = await db.prepare("SELECT id, role, path, added_by FROM people WHERE id = ?").get(id);
-  if (!target || target.id === user.id || !target.path.startsWith(user.path)) throw new HttpError(404, "Person not found.");
+  const target = await db.prepare("SELECT id, role, path, added_by, hidden FROM people WHERE id = ?").get(id);
+  if (!target || target.id === user.id || isHiddenFrom(target, user) || !target.path.startsWith(user.path)) throw new HttpError(404, "Person not found.");
   if (target.role === "super_admin") throw new HttpError(403, "A super admin can't be removed.");
   const parent = await db.prepare("SELECT path FROM people WHERE id = ?").get(target.added_by);
   // All in one step: anyone this person added moves up to whoever added them, so nobody is lost.
@@ -744,9 +758,9 @@ async function deletePerson(req, res, id) {
 async function resetPassword(req, res, id) {
   const user = await requireUser(req);
   const body = await readBody(req);
-  const target = await db.prepare("SELECT id, path, role, login, password_hash FROM people WHERE id = ?").get(id);
+  const target = await db.prepare("SELECT id, path, role, login, password_hash, hidden FROM people WHERE id = ?").get(id);
   const isSelf = target && target.id === user.id;
-  if (!target || (!isSelf && !target.path.startsWith(user.path)) || target.role === "supporter") throw new HttpError(404, "Agent not found.");
+  if (!target || isHiddenFrom(target, user) || (!isSelf && !target.path.startsWith(user.path)) || target.role === "supporter") throw new HttpError(404, "Agent not found.");
   // Each super admin changes only their own password (from My Account).
   if (!isSelf && target.role === "super_admin") throw new HttpError(403, "Only that super admin can change their password.");
   // Changing your own password needs the current one, so an unattended screen can't be used to take over the account.

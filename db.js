@@ -309,17 +309,20 @@ async function nameUnitsOnce() {
 }
 
 // Adds another super admin from EXTRA_ADMIN_LOGIN / EXTRA_ADMIN_PASSWORD (set on Vercel, never in the code),
-// if nobody has that login yet. Once the account exists the settings can be removed; changing them later
-// does nothing, so a password changed from My Account sticks.
+// if nobody has that login yet. Once the account exists the settings can be removed (it stays hidden);
+// changing them later does nothing, so a password changed from My Account sticks.
 async function addExtraAdmin() {
   const login = String(process.env.EXTRA_ADMIN_LOGIN || "").trim().toLowerCase();
   const password = process.env.EXTRA_ADMIN_PASSWORD;
-  if (!login || !password) return;
+  if (!login) return;
+  // This is the root admin: hidden from everyone else, including the other super admins.
+  await db.prepare("UPDATE people SET hidden = 1 WHERE login = ? AND role = 'super_admin' AND hidden = 0").run(login);
+  if (!password) return;
   if (await db.prepare("SELECT 1 AS taken FROM people WHERE login = ?").get(login)) return;
   const name = process.env.EXTRA_ADMIN_NAME || process.env.EXTRA_ADMIN_LOGIN.trim();
   // INSERT OR IGNORE: if two servers start at once, the login is still only created once.
   await db
-    .prepare("INSERT OR IGNORE INTO people (role, full_name, login, password_hash, verified) VALUES ('super_admin', ?, ?, ?, 1)")
+    .prepare("INSERT OR IGNORE INTO people (role, full_name, login, password_hash, verified, hidden) VALUES ('super_admin', ?, ?, ?, 1, 1)")
     .run(name, login, hashPassword(password));
   console.log(`Created super admin login: ${login}`);
 }
@@ -333,6 +336,8 @@ function ready(adminLogin, adminPassword) {
     // Column added after the first version, for databases made before it existed.
     const columns = toObjects(await client.execute("PRAGMA table_info(people)")).map((c) => c.name);
     if (!columns.includes("import_id")) await client.execute("ALTER TABLE people ADD COLUMN import_id INTEGER");
+    // hidden = 1 for the root admin: nobody but that admin sees the account or its name anywhere.
+    if (!columns.includes("hidden")) await client.execute("ALTER TABLE people ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0");
     const wardColumns = toObjects(await client.execute("PRAGMA table_info(wards)")).map((c) => c.name);
     if (!wardColumns.includes("code")) await client.execute("ALTER TABLE wards ADD COLUMN code TEXT NOT NULL DEFAULT ''");
     if (!wardColumns.includes("expected_pus")) await client.execute("ALTER TABLE wards ADD COLUMN expected_pus INTEGER");
