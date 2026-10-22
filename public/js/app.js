@@ -269,9 +269,14 @@ async function showDashboard() {
 
 // ---------- verify VIN ----------
 
-// Most VINs are 19 letters and numbers; newer ones ("INC2…") are 20, and a few are 18 or 21.
+// The shapes of real INEC VINs. Every one of the 2,167,529 VINs in the Adamawa register has one of them:
+//   10 characters from 0-9 and A-F, then 9 digits (90F5B18CEF296209488) — nearly all;
+//   the same with 8 or 11 digits at the end — a few hundred;
+//   INC and 17 digits (INC21000000005573102) — newer registrations.
+// The server checks the same shapes. A VIN of another shape is invalid. One of these shapes that is not in the register (yet) is still syncing with INEC.
 // Some lists print a 19-character VIN with "00" in front; the card itself has the 19 characters.
-const VIN_PATTERN = /^[A-Z0-9]{18,21}$/;
+const VIN_PATTERN = /^(?:[0-9A-F]{10}(?:\d{9}|\d{8}|\d{11})|INC\d{17})$/;
+const INVALID_VIN = "Invalid VIN. A VIN is 19 characters (or INC and 17 numbers), as printed on the voter's card. Check the number and try again.";
 function cleanVin(value) {
   const vin = String(value || "").replace(/\s+/g, "").toUpperCase();
   return vin.length === 21 && vin.startsWith("00") ? vin.slice(2) : vin;
@@ -312,7 +317,7 @@ function showVerify() {
           <input id="vvin" maxlength="23" placeholder="e.g. 90F5B1407E296460333" autocomplete="off" autofocus>
           <button class="btn btn-primary" id="vbtn">Verify</button>
         </div>
-        <p class="hint">19 or 20 letters and numbers, printed on the voter's card.</p>
+        <p class="hint">19 characters (or INC and 17 numbers), printed on the voter's card.</p>
       </form>
       <div id="vresult"></div>
     </div>
@@ -339,7 +344,7 @@ function showVerify() {
     const btn = document.getElementById("vbtn");
     const vin = cleanVin(document.getElementById("vvin").value);
     if (!VIN_PATTERN.test(vin)) {
-      out.innerHTML = `<div class="alert alert-error">A VIN is 19 or 20 letters and numbers. Check the number on the voter's card.</div>`;
+      out.innerHTML = `<div class="alert alert-error">${esc(INVALID_VIN)}</div>`;
       return;
     }
     btn.disabled = true;
@@ -377,11 +382,11 @@ function showVerify() {
 // Checking many VINs at once. Each line (or Excel row) is checked for format, repeats in the list,
 // and whether the person is already in the system. Names from an Excel file are kept beside their VIN.
 const BULK_STATUS = {
-  invalid: "Wrong format",
+  invalid: "Invalid VIN",
   repeat: "Repeated in list",
   registered: "Already registered",
   found: "In voter register",
-  notfound: "Not in register",
+  syncing: "Syncing with INEC",
   awaiting: "Awaiting INEC",
 };
 
@@ -464,7 +469,7 @@ function downloadVinTemplate() {
     ["How to fill this template"],
     [""],
     ["1. One voter per row, under the column names. Add more rows if you need them (up to 5,000)."],
-    ["2. VIN is required: the 19 or 20 letters and numbers printed on the voter's card. Spaces are ignored."],
+    ["2. VIN is required: the 19 characters (or INC and 17 numbers) printed on the voter's card. Spaces are ignored."],
     ["3. Full Name, Phone and Polling Unit are optional; the name is shown beside each result."],
     ["4. Do not change the column names row."],
     ["5. Save the file, then on the Verify Voter's Card page click Choose Excel file and then Check all."],
@@ -509,12 +514,12 @@ async function showLookupLog() {
 
 function bulkResultText(r) {
   const place = [r.polling_unit, r.ward, r.lga].filter(Boolean).join(", ");
-  if (r.status === "invalid") return "Not 19 or 20 letters and numbers.";
+  if (r.status === "invalid") return "Invalid VIN: not the format of a VIN on a voter's card.";
   if (r.status === "repeat") return "Appears more than once in this list.";
   if (r.status === "registered") return r.role ? `In the system as ${ROLE_LABEL[r.role]}: ${r.full_name}` : "Already registered in another area.";
   if (r.status === "found") return `Registered at ${place}${r.polling_unit_code ? ` (${r.polling_unit_code})` : ""}.`;
   if (r.status === "awaiting") return "Format correct. Not yet checked against the INEC register.";
-  return "Not found in the Adamawa State voter register.";
+  return "Correct format, not in our copy of the register yet: still syncing with INEC.";
 }
 
 function renderBulkResults(out, results, message, remaining) {
@@ -529,7 +534,7 @@ function renderBulkResults(out, results, message, remaining) {
       ${remaining == null ? "" : `<span class="hint" style="margin:0">${esc(remainingText(remaining))}</span>`}
     </div>
     ${counts.awaiting ? `<div class="alert alert-warn">${esc(message)}</div>` : ""}
-    ${counts.notfound ? `<div class="alert alert-warn">${counts.notfound.toLocaleString()} VIN${counts.notfound === 1 ? " is" : "s are"} not in the Adamawa State voter register. Check them against the voter's card.</div>` : ""}
+    ${counts.syncing ? `<div class="alert alert-warn">${counts.syncing.toLocaleString()} VIN${counts.syncing === 1 ? " is" : "s are"} in the correct format but not in our copy of the INEC register yet: verification is still syncing with INEC. Try them again later.</div>` : ""}
     <div class="bulk-actions" style="margin-bottom:12px">
       <button class="btn btn-outline btn-small" id="bulkExport">Export Excel</button>
       <button class="btn btn-outline btn-small" id="bulkPrint">🖨 Print</button>
@@ -1045,7 +1050,7 @@ document.getElementById("fetchVin").addEventListener("click", async () => {
   const hint = document.getElementById("vinHint");
   const vin = cleanVin(document.getElementById("pVin").value);
   if (!VIN_PATTERN.test(vin)) {
-    hint.textContent = "A VIN is 19 or 20 letters and numbers.";
+    hint.textContent = INVALID_VIN;
     return;
   }
   btn.disabled = true;
@@ -1189,7 +1194,7 @@ async function downloadTemplateFor(agentId) {
     [""],
     [`1. This file belongs to ${agent.full_name} (${ROLE_LABEL[agent.role]}). Do not change the details at the top.`],
     ["2. Add one supporter per row under the column names. Full Name is required."],
-    ["3. VIN must be 19 or 20 letters and numbers if given. A VIN already in the system will be skipped."],
+    ["3. VIN must be a valid VIN (19 characters, or INC and 17 numbers) if given. A VIN already in the system will be skipped."],
     ["4. Leave LGA, Ward or Polling Unit blank to use the agent's own area."],
     ["5. Save the file and upload it on the Import from Excel page."],
     [""],

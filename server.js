@@ -48,9 +48,13 @@ const CAN_ADD = {
   supporter: [],
 };
 
-// Most VINs are 19 letters and numbers; newer ones ("INC2…") are 20, and a few are 18 or 21.
-const VIN_PATTERN = /^[A-Z0-9]{18,21}$/;
-const VIN_RULE = "19 or 20 letters and numbers";
+// The shapes of real INEC VINs. Every one of the 2,167,529 VINs in the Adamawa register has one of them:
+//   10 characters from 0-9 and A-F, then 9 digits (90F5B18CEF296209488) — nearly all;
+//   the same with 8 or 11 digits at the end — a few hundred;
+//   INC and 17 digits (INC21000000005573102) — newer registrations.
+// A VIN of another shape is invalid. One of these shapes that is not in the register (yet) is still syncing with INEC.
+const VIN_PATTERN = /^(?:[0-9A-F]{10}(?:\d{9}|\d{8}|\d{11})|INC\d{17})$/;
+const INVALID_VIN = "Invalid VIN. A VIN is 19 characters (or INC and 17 numbers), as printed on the voter's card. Check the number and try again.";
 
 const PUBLIC_FIELDS =
   "id, role, full_name, vin, gender, date_of_birth, phone, occupation, address, lga, ward, polling_unit, polling_unit_code, assign_lga, assign_ward, assign_pu, verified, login, added_by, import_id, created_at";
@@ -191,7 +195,7 @@ async function count(sql, ...args) {
 
 // VINs are looked up in the Adamawa voter register (the voters table, loaded with scripts/load-voters.js).
 const VOTER_FIELDS = "vin, full_name, gender, birth_year, lga, ward, polling_unit, polling_unit_code";
-const NOT_IN_REGISTER = "This VIN is not in the Adamawa State voter register. Check the number on the voter's card.";
+const STILL_SYNCING = "This VIN is in the correct format but is not in our copy of the INEC register yet: verification is still syncing with INEC. Please try again later.";
 
 // The register lookup stays switched off until INEC approves it: set VIN_REGISTER_ENABLED=1 on Vercel
 // (and redeploy) to switch it on. While it is off, every VIN check says it is awaiting INEC's approval;
@@ -239,12 +243,12 @@ async function verifyVin(req, res) {
   const user = await requireUser(req);
   const body = await readBody(req);
   const vin = cleanVin(body.vin);
-  if (!VIN_PATTERN.test(vin)) throw new HttpError(400, `A VIN is ${VIN_RULE}. Check the number on the voter's card.`);
+  if (!VIN_PATTERN.test(vin)) throw new HttpError(400, INVALID_VIN);
   if (!REGISTER_ENABLED) throw new HttpError(503, VERIFY_UNAVAILABLE);
   const remaining = await checkLookupLimit(user, 1);
   const row = await db.prepare(`SELECT ${VOTER_FIELDS} FROM voters WHERE vin = ?`).get(vin);
   await logLookup(user, "single", 1, row ? 1 : 0);
-  if (!row) throw new HttpError(404, NOT_IN_REGISTER);
+  if (!row) throw new HttpError(404, STILL_SYNCING);
   const { birth_year, ...voter } = row;
   voter.state = "Adamawa";
   if (birth_year) voter.birth_year = birth_year;
@@ -286,10 +290,10 @@ async function verifyVins(req, res) {
     // Names are only shown for people in your own structure.
     if (person) return person.path.startsWith(user.path) ? { vin, status: "registered", role: person.role, full_name: person.full_name, ...place } : { vin, status: "registered", ...place };
     if (!REGISTER_ENABLED) return { vin, status: "awaiting" };
-    return voter ? { vin, status: "found", ...place } : { vin, status: "notfound" };
+    return voter ? { vin, status: "found", ...place } : { vin, status: "syncing" };
   });
   if (REGISTER_ENABLED && valid.length) await logLookup(user, "bulk", valid.length, voters.size);
-  sendJson(res, 200, { results, message: REGISTER_ENABLED ? NOT_IN_REGISTER : VERIFY_UNAVAILABLE, remaining });
+  sendJson(res, 200, { results, message: REGISTER_ENABLED ? STILL_SYNCING : VERIFY_UNAVAILABLE, remaining });
 }
 
 // For the super admin: how many VINs each agent has checked today, and the latest lookups.
@@ -352,7 +356,7 @@ async function agentAssignment(creator, role, body) {
 // duplicate VINs are checked by the callers.
 function personRow(creator, role, person, extra = {}) {
   if (!person.full_name) throw new HttpError(400, "Full name is required.");
-  if (person.vin && !VIN_PATTERN.test(person.vin)) throw new HttpError(400, `VIN "${person.vin}" is not ${VIN_RULE}.`);
+  if (person.vin && !VIN_PATTERN.test(person.vin)) throw new HttpError(400, `VIN "${person.vin}" is not a valid VIN. Check the number on the voter's card.`);
   // Supporters belong to the area of the agent who added them.
   const area = role === "supporter" ? { assign_lga: creator.assign_lga, assign_ward: creator.assign_ward, assign_pu: creator.assign_pu } : extra;
   const row = {
@@ -442,7 +446,7 @@ async function importPeople(req, res) {
     person.ward ||= owner.assign_ward || "";
     person.polling_unit ||= owner.assign_pu || "";
     if (!person.full_name) return errors.push({ row: rowNumber, message: "Full name is required." });
-    if (person.vin && !VIN_PATTERN.test(person.vin)) return errors.push({ row: rowNumber, message: `VIN "${person.vin}" is not ${VIN_RULE}.` });
+    if (person.vin && !VIN_PATTERN.test(person.vin)) return errors.push({ row: rowNumber, message: `VIN "${person.vin}" is not a valid VIN.` });
     if (person.vin && seenVins.has(person.vin)) return errors.push({ row: rowNumber, message: `VIN ${person.vin} appears twice in this file.` });
     if (person.vin) seenVins.add(person.vin);
     people.push({ person, rowNumber });
