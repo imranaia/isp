@@ -293,6 +293,15 @@ const DETAIL_FIELDS = [
   ["registered_on", "Registered on"],
 ];
 
+// Who already has this VIN; only people in your own structure are named.
+function registeredText(a) {
+  return a.elsewhere ? "Already registered in another area." : `Already in the system as ${ROLE_LABEL[a.role]}: ${a.full_name}.`;
+}
+
+function remainingText(remaining) {
+  return remaining == null ? "" : `${remaining.toLocaleString()} VIN check${remaining === 1 ? "" : "s"} left today.`;
+}
+
 function showVerify() {
   setHeader("Verify Voter's Card", "Enter a VIN to see the voter's registration details.");
   view.innerHTML = `
@@ -320,8 +329,10 @@ function showVerify() {
         </div>
       </form>
       <div id="bulkResult"></div>
-    </div>`;
+    </div>
+    ${state.user.role === "super_admin" ? `<div class="card" style="margin-top:20px" id="lookupLog"><div class="empty">Loading the lookup log…</div></div>` : ""}`;
   setupBulkVerify();
+  if (state.user.role === "super_admin") showLookupLog();
   document.getElementById("verifyForm").addEventListener("submit", async (e) => {
     e.preventDefault();
     const out = document.getElementById("vresult");
@@ -335,7 +346,7 @@ function showVerify() {
     btn.textContent = "Checking…";
     out.innerHTML = "";
     try {
-      const { voter, alreadyRegistered } = await api("/api/verify-vin", { method: "POST", body: { vin } });
+      const { voter, alreadyRegistered, remaining } = await api("/api/verify-vin", { method: "POST", body: { vin } });
       const card = { ...voter, vin };
       const addButtons = state.canAdd
         .map((role) => `<button class="btn ${role === "supporter" ? "btn-primary" : "btn-outline"}" data-add="${role}">Add as ${ROLE_LABEL[role]}</button>`)
@@ -348,10 +359,11 @@ function showVerify() {
             .join("")}</dl>
           ${
             alreadyRegistered
-              ? `<div class="voter-card-foot"><div class="alert alert-warn" style="margin:0">Already in the system as ${esc(ROLE_LABEL[alreadyRegistered.role])}: ${esc(alreadyRegistered.full_name)}.</div></div>`
+              ? `<div class="voter-card-foot"><div class="alert alert-warn" style="margin:0">${esc(registeredText(alreadyRegistered))}</div></div>`
               : `<div class="voter-card-foot">${addButtons}</div>`
           }
-        </div>`;
+        </div>
+        ${remaining == null ? "" : `<p class="hint">${esc(remainingText(remaining))}</p>`}`;
       out.querySelectorAll("[data-add]").forEach((b) => b.addEventListener("click", () => openPersonModal(b.dataset.add, card)));
     } catch (err) {
       out.innerHTML = `<div class="alert alert-error">${esc(err.message)}</div>`;
@@ -419,9 +431,9 @@ function setupBulkVerify() {
     btn.disabled = true;
     btn.textContent = "Checking…";
     try {
-      const { results, message } = await api("/api/verify-vins", { method: "POST", body: { vins } });
+      const { results, message, remaining } = await api("/api/verify-vins", { method: "POST", body: { vins } });
       results.forEach((r) => (r.name = r.full_name || r.voter_name || names.get(r.vin) || ""));
-      renderBulkResults(out, results, message);
+      renderBulkResults(out, results, message, remaining);
     } catch (err) {
       out.innerHTML = `<div class="alert alert-error">${esc(err.message)}</div>`;
     } finally {
@@ -463,6 +475,37 @@ function downloadVinTemplate() {
   XLSX.writeFile(book, "ISP-VIN-check-template.xlsx");
 }
 
+// For the super admin: who has been checking VINs, so copying the register in bulk would show up here.
+async function showLookupLog() {
+  const box = document.getElementById("lookupLog");
+  try {
+    const { today, recent, limit } = await api("/api/vin-lookups");
+    const who = (r) => `${esc(r.full_name || "Deleted account")}${r.role ? ` <span class="pill pill-${r.role}">${ROLE_LABEL[r.role]}</span>` : ""}`;
+    const area = (r) => esc(r.role ? scopeText(r) : "—");
+    box.innerHTML = `
+      <div class="card-head"><h2>VIN lookup log</h2></div>
+      <p class="muted">Each agent can check up to ${limit.toLocaleString()} VINs a day; super admins have no limit. An agent near the limit every day may be copying the register.</p>
+      <h3>Today</h3>
+      ${
+        today.length
+          ? `<div class="table-wrap"><table><thead><tr><th>Agent</th><th>Area</th><th>VINs checked</th><th>In register</th><th>Checks</th></tr></thead><tbody>${today
+              .map((r) => `<tr><td>${who(r)}</td><td class="wrap">${area(r)}</td><td><b>${Number(r.vins).toLocaleString()}</b>${r.role && r.role !== "super_admin" && r.vins >= limit ? " · limit reached" : ""}</td><td>${Number(r.found).toLocaleString()}</td><td>${r.lookups}</td></tr>`)
+              .join("")}</tbody></table></div>`
+          : `<div class="empty">No VINs checked today.</div>`
+      }
+      <h3 style="margin-top:16px">Latest checks</h3>
+      ${
+        recent.length
+          ? `<div class="table-wrap"><table><thead><tr><th>Time</th><th>Agent</th><th>Type</th><th>VINs</th><th>In register</th></tr></thead><tbody>${recent
+              .map((r) => `<tr><td>${esc(new Date(r.created_at).toLocaleString("en-GB", { timeZone: "Africa/Lagos", dateStyle: "short", timeStyle: "short" }))}</td><td>${who(r)}</td><td>${r.kind === "bulk" ? "Many at once" : "One VIN"}</td><td>${Number(r.vins).toLocaleString()}</td><td>${Number(r.found).toLocaleString()}</td></tr>`)
+              .join("")}</tbody></table></div>`
+          : `<div class="empty">No VIN checks yet.</div>`
+      }`;
+  } catch (err) {
+    box.innerHTML = `<div class="alert alert-error">${esc(err.message)}</div>`;
+  }
+}
+
 function bulkResultText(r) {
   const place = [r.polling_unit, r.ward, r.lga].filter(Boolean).join(", ");
   if (r.status === "invalid") return "Not 19 or 20 letters and numbers.";
@@ -472,7 +515,7 @@ function bulkResultText(r) {
   return "Not found in the Adamawa State voter register.";
 }
 
-function renderBulkResults(out, results, message) {
+function renderBulkResults(out, results, message, remaining) {
   const counts = Object.fromEntries(Object.keys(BULK_STATUS).map((s) => [s, results.filter((r) => r.status === s).length]));
   out.innerHTML = `
     <div class="bulk-summary">
@@ -481,6 +524,7 @@ function renderBulkResults(out, results, message) {
         .filter(([s]) => counts[s])
         .map(([s, label]) => `<span class="pill pill-${s}">${counts[s].toLocaleString()} · ${label}</span>`)
         .join("")}
+      ${remaining == null ? "" : `<span class="hint" style="margin:0">${esc(remainingText(remaining))}</span>`}
     </div>
     ${counts.notfound ? `<div class="alert alert-warn">${counts.notfound.toLocaleString()} VIN${counts.notfound === 1 ? " is" : "s are"} not in the Adamawa State voter register. Check them against the voter's card.</div>` : ""}
     <div class="bulk-actions" style="margin-bottom:12px">
@@ -1006,7 +1050,7 @@ document.getElementById("fetchVin").addEventListener("click", async () => {
   try {
     const { voter, alreadyRegistered } = await api("/api/verify-vin", { method: "POST", body: { vin } });
     fillFromCard({ ...voter, vin });
-    if (alreadyRegistered) hint.textContent = `⚠ Already registered as ${ROLE_LABEL[alreadyRegistered.role]}: ${alreadyRegistered.full_name}.`;
+    if (alreadyRegistered) hint.textContent = `⚠ ${registeredText(alreadyRegistered)}`;
   } catch (err) {
     hint.textContent = err.message;
   } finally {

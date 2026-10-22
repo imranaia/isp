@@ -193,21 +193,58 @@ async function count(sql, ...args) {
 const VOTER_FIELDS = "vin, full_name, gender, birth_year, lga, ward, polling_unit, polling_unit_code";
 const NOT_IN_REGISTER = "This VIN is not in the Adamawa State voter register. Check the number on the voter's card.";
 
+// Each agent can look up this many VINs a day (single and bulk checks together), so nobody can copy
+// the register by trying VINs in bulk. Super admins have no limit; every lookup is logged either way.
+const VIN_DAILY_LIMIT = Number(process.env.VIN_DAILY_LIMIT) || 2000;
+const LAGOS_OFFSET_MS = 60 * 60 * 1000; // Nigeria is UTC+1 all year
+
+// Midnight in Nigeria today, in ms.
+function startOfToday() {
+  const lagos = new Date(Date.now() + LAGOS_OFFSET_MS);
+  return Date.UTC(lagos.getUTCFullYear(), lagos.getUTCMonth(), lagos.getUTCDate()) - LAGOS_OFFSET_MS;
+}
+
+async function lookupsToday(personId) {
+  const row = await db.prepare("SELECT COALESCE(SUM(vins), 0) AS n FROM vin_lookups WHERE person_id = ? AND created_at >= ?").get(personId, startOfToday());
+  return Number(row.n);
+}
+
+// Stops the lookup if it would take the agent past today's limit; returns how many are left after it.
+async function checkLookupLimit(user, count) {
+  if (user.role === "super_admin") return null;
+  const left = VIN_DAILY_LIMIT - (await lookupsToday(user.id));
+  if (count > left) {
+    throw new HttpError(
+      429,
+      left > 0
+        ? `You can check ${left.toLocaleString("en-US")} more VIN${left === 1 ? "" : "s"} today (the limit is ${VIN_DAILY_LIMIT.toLocaleString("en-US")} a day). Check fewer at once, or continue tomorrow.`
+        : `You have reached today's limit of ${VIN_DAILY_LIMIT.toLocaleString("en-US")} VIN checks. You can continue tomorrow.`
+    );
+  }
+  return left - count;
+}
+
+async function logLookup(user, kind, vins, found) {
+  await db.prepare("INSERT INTO vin_lookups (person_id, kind, vins, found, created_at) VALUES (?, ?, ?, ?, ?)").run(user.id, kind, vins, found, Date.now());
+}
+
 // Looks up one VIN: the voter's details from the register, and who already has it in the system.
 async function verifyVin(req, res) {
   const user = await requireUser(req);
   const body = await readBody(req);
   const vin = cleanVin(body.vin);
   if (!VIN_PATTERN.test(vin)) throw new HttpError(400, `A VIN is ${VIN_RULE}. Check the number on the voter's card.`);
+  const remaining = await checkLookupLimit(user, 1);
   const row = await db.prepare(`SELECT ${VOTER_FIELDS} FROM voters WHERE vin = ?`).get(vin);
+  await logLookup(user, "single", 1, row ? 1 : 0);
   if (!row) throw new HttpError(404, NOT_IN_REGISTER);
   const { birth_year, ...voter } = row;
   voter.state = "Adamawa";
   if (birth_year) voter.birth_year = birth_year;
   const person = await db.prepare("SELECT full_name, role, path FROM people WHERE vin = ?").get(vin);
-  // Names are only shown for people in your own structure.
-  const alreadyRegistered = person && (person.path.startsWith(user.path) ? { role: person.role, full_name: person.full_name } : { role: person.role, full_name: "someone in another area" });
-  sendJson(res, 200, { voter, alreadyRegistered: alreadyRegistered || null });
+  // Who has the VIN is only shown for people in your own structure.
+  const alreadyRegistered = person && (person.path.startsWith(user.path) ? { role: person.role, full_name: person.full_name } : { elsewhere: true });
+  sendJson(res, 200, { voter, alreadyRegistered: alreadyRegistered || null, remaining });
 }
 
 // Checks a whole list of VINs at once: the format, repeats within the list, who is already in the system,
@@ -218,6 +255,7 @@ async function verifyVins(req, res) {
   const list = (Array.isArray(body.vins) ? body.vins : []).slice(0, 5000).map(cleanVin);
   if (!list.some(Boolean)) throw new HttpError(400, "Add at least one VIN.");
   const valid = [...new Set(list.filter((v) => VIN_PATTERN.test(v)))];
+  const remaining = await checkLookupLimit(user, valid.length);
   const found = new Map();
   const voters = new Map();
   for (let i = 0; i < valid.length; i += 400) {
@@ -240,7 +278,24 @@ async function verifyVins(req, res) {
     if (person) return person.path.startsWith(user.path) ? { vin, status: "registered", role: person.role, full_name: person.full_name, ...place } : { vin, status: "registered", ...place };
     return voter ? { vin, status: "found", ...place } : { vin, status: "notfound" };
   });
-  sendJson(res, 200, { results, message: NOT_IN_REGISTER });
+  if (valid.length) await logLookup(user, "bulk", valid.length, voters.size);
+  sendJson(res, 200, { results, message: NOT_IN_REGISTER, remaining });
+}
+
+// For the super admin: how many VINs each agent has checked today, and the latest lookups.
+async function listLookups(req, res) {
+  await requireSuperAdmin(req);
+  const who = "p.full_name, p.role, p.assign_lga, p.assign_ward, p.assign_pu";
+  const today = await db
+    .prepare(
+      `SELECT ${who}, SUM(l.vins) AS vins, SUM(l.found) AS found, COUNT(*) AS lookups FROM vin_lookups l
+       LEFT JOIN people p ON p.id = l.person_id WHERE l.created_at >= ? GROUP BY l.person_id ORDER BY vins DESC LIMIT 200`
+    )
+    .all(startOfToday());
+  const recent = await db
+    .prepare(`SELECT ${who}, l.kind, l.vins, l.found, l.created_at FROM vin_lookups l LEFT JOIN people p ON p.id = l.person_id ORDER BY l.id DESC LIMIT 200`)
+    .all();
+  sendJson(res, 200, { today, recent, limit: VIN_DAILY_LIMIT });
 }
 
 // ---------- people ----------
@@ -901,6 +956,7 @@ async function route(req, res) {
 
   if (method === "POST" && pathname === "/api/verify-vin") return verifyVin(req, res);
   if (method === "POST" && pathname === "/api/verify-vins") return verifyVins(req, res);
+  if (method === "GET" && pathname === "/api/vin-lookups") return listLookups(req, res);
 
   const personMatch = /^\/api\/people\/(\d+)(\/password)?$/.exec(pathname);
   if (personMatch) {

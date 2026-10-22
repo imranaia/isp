@@ -142,6 +142,17 @@ const SCHEMA = [
     value TEXT NOT NULL
   )`,
   VOTERS_TABLE,
+  // Every VIN lookup: who made it, how many VINs, how many were in the register, and when (ms).
+  // Used for each agent's daily limit and for the super admin's lookup log.
+  `CREATE TABLE IF NOT EXISTS vin_lookups (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    person_id INTEGER REFERENCES people(id) ON DELETE SET NULL,
+    kind TEXT NOT NULL,
+    vins INTEGER NOT NULL,
+    found INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS vin_lookups_person ON vin_lookups(person_id, created_at)`,
 ];
 
 function hashPassword(password) {
