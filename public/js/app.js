@@ -277,9 +277,15 @@ async function showDashboard() {
 // Some lists print a 19-character VIN with "00" in front; the card itself has the 19 characters.
 const VIN_PATTERN = /^(?:[0-9A-F]{10}(?:\d{9}|\d{8}|\d{11})|INC\d{17})$/;
 const INVALID_VIN = "Invalid VIN. A VIN is 19 characters (or INC and 17 numbers), as printed on the voter's card. Check the number and try again.";
+// Spaces, dashes and dots typed between the characters are ignored.
 function cleanVin(value) {
-  const vin = String(value || "").replace(/\s+/g, "").toUpperCase();
-  return vin.length === 21 && vin.startsWith("00") ? vin.slice(2) : vin;
+  const vin = String(value || "").replace(/[\s.-]+/g, "").toUpperCase();
+  if (vin.length === 21 && vin.startsWith("00")) return vin.slice(2);
+  // An INC VIN is INC, the year (21, 22 …) and a 15-digit serial padded with zeros. Typed with a zero
+  // too many or too few, it is rebuilt with exactly 15 digits (no two VINs in the register clash this way).
+  const inc = /^INC(\d{2})0*(\d{1,15})$/.exec(vin);
+  if (inc && vin.length !== 20) return `INC${inc[1]}${inc[2].padStart(15, "0")}`;
+  return vin;
 }
 
 const DETAIL_FIELDS = [
