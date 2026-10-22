@@ -47,6 +47,19 @@ const db = {
   },
 };
 
+// The voter register of Adamawa State, looked up by VIN on the Verify page.
+// Loaded from the ward voter-list PDFs with scripts/load-voters.js; the data is never kept in this repo.
+const VOTERS_TABLE = `CREATE TABLE IF NOT EXISTS voters (
+  vin TEXT PRIMARY KEY,
+  full_name TEXT NOT NULL,
+  gender TEXT,
+  birth_year TEXT,
+  lga TEXT,
+  ward TEXT,
+  polling_unit TEXT,
+  polling_unit_code TEXT
+) WITHOUT ROWID`;
+
 // One table for everybody: the super admin, every agent and every supporter.
 // lga/ward/polling_unit come from the person's voter's card.
 // assign_* is the area an agent is in charge of.
@@ -128,6 +141,7 @@ const SCHEMA = [
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
   )`,
+  VOTERS_TABLE,
 ];
 
 function hashPassword(password) {
@@ -351,4 +365,4 @@ async function saveContent(content) {
     .run(JSON.stringify(content));
 }
 
-module.exports = { db, ready, hashPassword, checkPassword, getContent, saveContent };
+module.exports = { db, ready, VOTERS_TABLE, hashPassword, checkPassword, getContent, saveContent };

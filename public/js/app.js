@@ -269,10 +269,19 @@ async function showDashboard() {
 
 // ---------- verify VIN ----------
 
+// Most VINs are 19 letters and numbers; newer ones ("INC2…") are 20, and a few older ones 18.
+// Some lists print a 19-character VIN with "00" in front; the card itself has the 19 characters.
+const VIN_PATTERN = /^[A-Z0-9]{18,20}$/;
+function cleanVin(value) {
+  const vin = String(value || "").replace(/\s+/g, "").toUpperCase();
+  return vin.length === 21 && vin.startsWith("00") ? vin.slice(2) : vin;
+}
+
 const DETAIL_FIELDS = [
   ["vin", "VIN"],
   ["gender", "Gender"],
   ["date_of_birth", "Date of birth"],
+  ["birth_year", "Year of birth"],
   ["occupation", "Occupation"],
   ["phone", "Phone"],
   ["address", "Address"],
@@ -294,7 +303,7 @@ function showVerify() {
           <input id="vvin" maxlength="23" placeholder="e.g. 90F5B1407E296460333" autocomplete="off" autofocus>
           <button class="btn btn-primary" id="vbtn">Verify</button>
         </div>
-        <p class="hint">19 letters and numbers, printed on the voter's card.</p>
+        <p class="hint">19 or 20 letters and numbers, printed on the voter's card.</p>
       </form>
       <div id="vresult"></div>
     </div>
@@ -317,9 +326,9 @@ function showVerify() {
     e.preventDefault();
     const out = document.getElementById("vresult");
     const btn = document.getElementById("vbtn");
-    const vin = document.getElementById("vvin").value.replace(/\s+/g, "").toUpperCase();
-    if (!/^[A-Z0-9]{19}$/.test(vin)) {
-      out.innerHTML = `<div class="alert alert-error">A VIN is 19 letters and numbers. Check the number on the voter's card.</div>`;
+    const vin = cleanVin(document.getElementById("vvin").value);
+    if (!VIN_PATTERN.test(vin)) {
+      out.innerHTML = `<div class="alert alert-error">A VIN is 19 or 20 letters and numbers. Check the number on the voter's card.</div>`;
       return;
     }
     btn.disabled = true;
@@ -359,7 +368,8 @@ const BULK_STATUS = {
   invalid: "Wrong format",
   repeat: "Repeated in list",
   registered: "Already registered",
-  awaiting: "Awaiting INEC",
+  found: "In voter register",
+  notfound: "Not in register",
 };
 
 function setupBulkVerify() {
@@ -410,7 +420,7 @@ function setupBulkVerify() {
     btn.textContent = "Checking…";
     try {
       const { results, message } = await api("/api/verify-vins", { method: "POST", body: { vins } });
-      results.forEach((r) => (r.name = r.full_name || names.get(r.vin) || ""));
+      results.forEach((r) => (r.name = r.full_name || r.voter_name || names.get(r.vin) || ""));
       renderBulkResults(out, results, message);
     } catch (err) {
       out.innerHTML = `<div class="alert alert-error">${esc(err.message)}</div>`;
@@ -441,7 +451,7 @@ function downloadVinTemplate() {
     ["How to fill this template"],
     [""],
     ["1. One voter per row, under the column names. Add more rows if you need them (up to 5,000)."],
-    ["2. VIN is required: the 19 letters and numbers printed on the voter's card. Spaces are ignored."],
+    ["2. VIN is required: the 19 or 20 letters and numbers printed on the voter's card. Spaces are ignored."],
     ["3. Full Name, Phone and Polling Unit are optional; the name is shown beside each result."],
     ["4. Do not change the column names row."],
     ["5. Save the file, then on the Verify Voter's Card page click Choose Excel file and then Check all."],
@@ -454,10 +464,12 @@ function downloadVinTemplate() {
 }
 
 function bulkResultText(r) {
-  if (r.status === "invalid") return "Not 19 letters and numbers.";
+  const place = [r.polling_unit, r.ward, r.lga].filter(Boolean).join(", ");
+  if (r.status === "invalid") return "Not 19 or 20 letters and numbers.";
   if (r.status === "repeat") return "Appears more than once in this list.";
   if (r.status === "registered") return r.role ? `In the system as ${ROLE_LABEL[r.role]}: ${r.full_name}` : "Already registered in another area.";
-  return "Format correct. Not yet checked against the INEC register.";
+  if (r.status === "found") return `Registered at ${place}${r.polling_unit_code ? ` (${r.polling_unit_code})` : ""}.`;
+  return "Not found in the Adamawa State voter register.";
 }
 
 function renderBulkResults(out, results, message) {
@@ -470,7 +482,7 @@ function renderBulkResults(out, results, message) {
         .map(([s, label]) => `<span class="pill pill-${s}">${counts[s].toLocaleString()} · ${label}</span>`)
         .join("")}
     </div>
-    ${counts.awaiting ? `<div class="alert alert-warn">${esc(message)}</div>` : ""}
+    ${counts.notfound ? `<div class="alert alert-warn">${counts.notfound.toLocaleString()} VIN${counts.notfound === 1 ? " is" : "s are"} not in the Adamawa State voter register. Check them against the voter's card.</div>` : ""}
     <div class="bulk-actions" style="margin-bottom:12px">
       <button class="btn btn-outline btn-small" id="bulkExport">Export Excel</button>
       <button class="btn btn-outline btn-small" id="bulkPrint">🖨 Print</button>
@@ -498,7 +510,7 @@ function renderBulkResults(out, results, message) {
     XLSX.writeFile(book, `ISP-VIN-check-${new Date().toISOString().slice(0, 10)}.xlsx`);
   });
   document.getElementById("bulkPrint").addEventListener("click", () =>
-    printReport({ title: "VIN check", columns, rows: results, note: counts.awaiting ? message : "" })
+    printReport({ title: "VIN check", columns, rows: results, note: "" })
   );
 }
 
@@ -984,9 +996,9 @@ document.getElementById("assignWard").addEventListener("change", fillUnitOptions
 document.getElementById("fetchVin").addEventListener("click", async () => {
   const btn = document.getElementById("fetchVin");
   const hint = document.getElementById("vinHint");
-  const vin = document.getElementById("pVin").value.replace(/\s+/g, "").toUpperCase();
-  if (!/^[A-Z0-9]{19}$/.test(vin)) {
-    hint.textContent = "A VIN is 19 letters and numbers.";
+  const vin = cleanVin(document.getElementById("pVin").value);
+  if (!VIN_PATTERN.test(vin)) {
+    hint.textContent = "A VIN is 19 or 20 letters and numbers.";
     return;
   }
   btn.disabled = true;
@@ -1130,7 +1142,7 @@ async function downloadTemplateFor(agentId) {
     [""],
     [`1. This file belongs to ${agent.full_name} (${ROLE_LABEL[agent.role]}). Do not change the details at the top.`],
     ["2. Add one supporter per row under the column names. Full Name is required."],
-    ["3. VIN must be 19 letters and numbers if given. A VIN already in the system will be skipped."],
+    ["3. VIN must be 19 or 20 letters and numbers if given. A VIN already in the system will be skipped."],
     ["4. Leave LGA, Ward or Polling Unit blank to use the agent's own area."],
     ["5. Save the file and upload it on the Import from Excel page."],
     [""],
