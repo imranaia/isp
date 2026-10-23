@@ -153,6 +153,18 @@ const SCHEMA = [
     created_at INTEGER NOT NULL
   )`,
   `CREATE INDEX IF NOT EXISTS vin_lookups_person ON vin_lookups(person_id, created_at)`,
+  // Every VIN found in the register, once per person who verified it (checking it again moves it to the top).
+  // Counted on the dashboard and listed on the Verify page.
+  `CREATE TABLE IF NOT EXISTS vin_verifications (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    person_id INTEGER NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+    vin TEXT NOT NULL,
+    full_name TEXT NOT NULL,
+    polling_unit TEXT,
+    created_at INTEGER NOT NULL,
+    UNIQUE (person_id, vin)
+  )`,
+  `CREATE INDEX IF NOT EXISTS vin_verifications_time ON vin_verifications(created_at)`,
 ];
 
 function hashPassword(password) {

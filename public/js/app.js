@@ -14,6 +14,22 @@ const view = document.getElementById("view");
 
 // ---------- small helpers ----------
 
+// Short form for big counts so they always fit their box: 950, 1.2K, 45K, 3.4M, 1.1B …
+function compactNumber(value) {
+  let n = Math.round(Number(value) || 0);
+  if (Math.abs(n) < 1000) return n.toLocaleString();
+  const units = ["K", "M", "B", "T"];
+  let i = -1;
+  while (Math.abs(n) >= 999.5 && i < units.length - 1) {
+    n /= 1000;
+    i++;
+  }
+  return `${n >= 100 ? Math.round(n) : Number(n.toFixed(1))}${units[i]}`;
+}
+
+// The root admin's activity is hidden from everyone else; this reminds them.
+const ONLY_YOU_NOTE = "Only you can see your activity. Your VIN checks and verifications are hidden from everyone else on ISP.";
+
 function esc(value) {
   return String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 }
@@ -171,7 +187,7 @@ async function showDashboard() {
       { label: "Ward Agents", value: s.wardAgents, note: "In charge of a ward" },
       { label: "Polling Unit Agents", value: s.puAgents, note: "In charge of a polling unit" },
       { label: "Supporters", value: s.supporters, note: "People who will vote" },
-      { label: "Verified Cards", value: s.verified, note: "Checked against the voter register" },
+      { label: "Verified VINs", value: s.verified, note: me.hidden ? "Across the platform, yours included" : "Across the platform" },
     ],
     lga_agent: [
       { label: "Agents under you", value: s.totalAgents, note: `In ${me.assign_lga}`, feature: true },
@@ -179,18 +195,18 @@ async function showDashboard() {
       { label: "Polling Unit Agents", value: s.puAgents, note: "In charge of a polling unit" },
       { label: "Supporters", value: s.supporters, note: `Across ${me.assign_lga}` },
       { label: "Added this week", value: s.thisWeek, note: "New supporters, last 7 days" },
-      { label: "Verified Cards", value: s.verified, note: "Checked against the voter register" },
+      { label: "Verified VINs", value: s.verified, note: "By you and the agents under you" },
     ],
     ward_agent: [
       { label: "Polling Unit Agents", value: s.puAgents, note: `In ${me.assign_ward}`, feature: true },
       { label: "Supporters", value: s.supporters, note: `Across ${me.assign_ward}` },
       { label: "Added this week", value: s.thisWeek, note: "New supporters, last 7 days" },
-      { label: "Verified Cards", value: s.verified, note: "Checked against the voter register" },
+      { label: "Verified VINs", value: s.verified, note: "By you and the agents under you" },
     ],
     pu_agent: [
       { label: "My Supporters", value: s.supporters, note: me.assign_pu, feature: true },
       { label: "Added this week", value: s.thisWeek, note: "New supporters, last 7 days" },
-      { label: "Verified Cards", value: s.verified, note: "Checked against the voter register" },
+      { label: "Verified VINs", value: s.verified, note: "Verified by you" },
     ],
   }[role];
 
@@ -225,12 +241,13 @@ async function showDashboard() {
         <small>${ROLE_LABEL[role]}</small>
         <h2>Welcome, ${esc(me.full_name)}</h2>
         <p>${esc(scopeText(me))} · ${esc(DASHBOARD_INTRO[role])}</p>
+        ${me.hidden ? `<p class="only-you">🔒 ${esc(ONLY_YOU_NOTE)}</p>` : ""}
       </div>
       <div class="quick">${quick}</div>
     </div>
     <div class="stats">
       ${cards
-        .map((c) => `<div class="stat ${c.feature ? "feature" : ""}"><span>${c.label}</span><strong data-count="${c.value}">0</strong><small>${esc(c.note || "")}</small></div>`)
+        .map((c) => `<div class="stat ${c.feature ? "feature" : ""}"><span>${c.label}</span><strong data-count="${c.value}" title="${Number(c.value || 0).toLocaleString()}">0</strong><small>${esc(c.note || "")}</small></div>`)
         .join("")}
     </div>
     <div class="${role === "pu_agent" ? "" : "two-col"}">
@@ -259,7 +276,7 @@ async function showDashboard() {
     const start = performance.now();
     const tick = (now) => {
       const t = Math.min((now - start) / 700, 1);
-      el.textContent = Math.round(target * (1 - Math.pow(1 - t, 3))).toLocaleString();
+      el.textContent = compactNumber(target * (1 - Math.pow(1 - t, 3)));
       if (t < 1) requestAnimationFrame(tick);
     };
     requestAnimationFrame(tick);
@@ -327,6 +344,7 @@ function showVerify() {
       </form>
       <div id="vresult"></div>
     </div>
+    <div class="card" style="margin-top:20px" id="verifiedList"><div class="empty">Loading verified VINs…</div></div>
     <div class="card verify-box" style="margin-top:20px">
       <div class="card-head"><h2>Check many VINs at once</h2></div>
       <form id="bulkForm">
@@ -343,6 +361,7 @@ function showVerify() {
     </div>
     ${state.user.role === "super_admin" ? `<div class="card" style="margin-top:20px" id="lookupLog"><div class="empty">Loading the lookup log…</div></div>` : ""}`;
   setupBulkVerify();
+  showVerifiedList();
   if (state.user.role === "super_admin") showLookupLog();
   document.getElementById("verifyForm").addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -376,6 +395,7 @@ function showVerify() {
         </div>
         ${remaining == null ? "" : `<p class="hint">${esc(remainingText(remaining))}</p>`}`;
       out.querySelectorAll("[data-add]").forEach((b) => b.addEventListener("click", () => openPersonModal(b.dataset.add, card)));
+      showVerifiedList();
     } catch (err) {
       out.innerHTML = `<div class="alert alert-error">${esc(err.message)}</div>`;
     } finally {
@@ -446,6 +466,7 @@ function setupBulkVerify() {
       const { results, message, remaining } = await api("/api/verify-vins", { method: "POST", body: { vins } });
       results.forEach((r) => (r.name = r.full_name || r.voter_name || names.get(r.vin) || ""));
       renderBulkResults(out, results, message, remaining);
+      if (results.some((r) => r.voter_name)) showVerifiedList();
     } catch (err) {
       out.innerHTML = `<div class="alert alert-error">${esc(err.message)}</div>`;
     } finally {
@@ -485,6 +506,37 @@ function downloadVinTemplate() {
   XLSX.utils.book_append_sheet(book, sheet, "VINs");
   XLSX.utils.book_append_sheet(book, help, "Instructions");
   XLSX.writeFile(book, "ISP-VIN-check-template.xlsx");
+}
+
+// Every VIN found in the register by you and the people under you (super admins: everyone's), newest first.
+async function showVerifiedList() {
+  const box = document.getElementById("verifiedList");
+  if (!box) return;
+  try {
+    const { total, rows, onlyYou } = await api("/api/verifications");
+    const others = rows.some((r) => !r.mine);
+    const when = (ms) => new Date(ms).toLocaleString("en-GB", { timeZone: "Africa/Lagos", dateStyle: "short", timeStyle: "short" });
+    box.innerHTML = `
+      <div class="card-head"><h2>Verified VINs</h2><span class="pill pill-found" title="${Number(total).toLocaleString()}">${compactNumber(total)} verified</span></div>
+      ${onlyYou ? `<p class="only-you">🔒 ${esc(ONLY_YOU_NOTE)}</p>` : ""}
+      ${
+        rows.length
+          ? `<div class="table-wrap"><table>
+              <thead><tr><th>#</th><th>VIN</th><th>Name</th><th>Status</th>${others ? "<th>Verified by</th>" : ""}<th>When</th></tr></thead>
+              <tbody>${rows
+                .map(
+                  (r, i) => `<tr><td>${i + 1}</td><td class="mono">${esc(r.vin)}</td><td>${esc(r.full_name)}</td>
+                    <td><span class="pill pill-found">✓ Verified</span></td>
+                    ${others ? `<td>${r.mine ? "You" : esc(r.checked_by)}</td>` : ""}<td>${esc(when(r.created_at))}</td></tr>`
+                )
+                .join("")}</tbody>
+            </table></div>
+            ${total > rows.length ? `<p class="hint">Showing the latest ${rows.length} of ${Number(total).toLocaleString()}.</p>` : ""}`
+          : `<div class="empty">No VINs verified yet. Each VIN found in the register will be listed here.</div>`
+      }`;
+  } catch (err) {
+    box.innerHTML = `<div class="alert alert-error">${esc(err.message)}</div>`;
+  }
 }
 
 // For the super admin: who has been checking VINs, so copying the register in bulk would show up here.

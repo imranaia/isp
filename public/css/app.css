@@ -150,7 +150,8 @@ h1, h2, h3 { margin: 0; }
   padding: 20px;
 }
 .stat span { display: block; font-size: 13px; font-weight: 600; color: var(--muted); }
-.stat strong { display: block; font-family: var(--display); font-size: 38px; line-height: 1.1; margin-top: 8px; font-variant-numeric: tabular-nums; }
+.stat strong { display: block; font-family: var(--display); font-size: clamp(28px, 3.2vw, 38px); line-height: 1.1; margin-top: 8px; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.only-you { margin: 8px 0 0; padding: 8px 12px; border-radius: 8px; background: #fff4d6; color: #6b4d00; font-size: 13px; font-weight: 600; }
 .stat small { color: var(--muted); font-size: 12px; }
 .stat.feature { background: linear-gradient(135deg, var(--green-800), var(--green-950)); border-color: transparent; color: #fff; }
 .stat.feature span, .stat.feature small { color: rgba(255, 255, 255, 0.7); }

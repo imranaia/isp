@@ -166,7 +166,7 @@ async function currentUser(req) {
   const now = Date.now();
   const row = await db
     .prepare(
-      `SELECT ${PREFIXED_FIELDS}, p.path, s.expires_at AS session_expires FROM sessions s JOIN people p ON p.id = s.person_id WHERE s.token = ? AND s.expires_at > ?`
+      `SELECT ${PREFIXED_FIELDS}, p.path, p.hidden, s.expires_at AS session_expires FROM sessions s JOIN people p ON p.id = s.person_id WHERE s.token = ? AND s.expires_at > ?`
     )
     .get(hash, now);
   if (!row) return null;
@@ -249,6 +249,42 @@ async function logLookup(user, kind, vins, found) {
   await db.prepare("INSERT INTO vin_lookups (person_id, kind, vins, found, created_at) VALUES (?, ?, ?, ?, ?)").run(user.id, kind, vins, found, Date.now());
 }
 
+// Verifications a user can see: their own and everyone's under them (a super admin's scope is everyone).
+// The root admin's are seen by nobody else; the root admin sees everyone's.
+function verificationScope(user) {
+  return { sql: "p.path LIKE ? AND (p.hidden = 0 OR p.id = ?)", args: [`${user.path}%`, user.id] };
+}
+
+// Records the voters a user has just found in the register.
+async function recordVerifications(user, voters) {
+  const now = Date.now();
+  for (let i = 0; i < voters.length; i += 400) {
+    const chunk = voters.slice(i, i + 400);
+    await db
+      .prepare(
+        `INSERT INTO vin_verifications (person_id, vin, full_name, polling_unit, created_at) VALUES ${chunk.map(() => "(?, ?, ?, ?, ?)").join(", ")}
+         ON CONFLICT (person_id, vin) DO UPDATE SET created_at = excluded.created_at, full_name = excluded.full_name`
+      )
+      .run(...chunk.flatMap((v) => [user.id, v.vin, v.full_name, v.polling_unit || "", now]));
+  }
+}
+
+// The verified VINs a user can see, newest first, and how many different VINs that is.
+async function listVerifications(req, res) {
+  const user = await requireUser(req);
+  const scope = verificationScope(user);
+  const [total, rows] = await Promise.all([
+    count(`SELECT COUNT(DISTINCT v.vin) AS n FROM vin_verifications v JOIN people p ON p.id = v.person_id WHERE ${scope.sql}`, ...scope.args),
+    db
+      .prepare(
+        `SELECT v.vin, v.full_name, v.polling_unit, v.created_at, p.full_name AS checked_by, p.role AS checked_by_role, p.id = ? AS mine
+         FROM vin_verifications v JOIN people p ON p.id = v.person_id WHERE ${scope.sql} ORDER BY v.created_at DESC, v.id DESC LIMIT 200`
+      )
+      .all(user.id, ...scope.args),
+  ]);
+  sendJson(res, 200, { total, rows, onlyYou: Boolean(user.hidden) });
+}
+
 // Looks up one VIN: the voter's details from the register, and who already has it in the system.
 async function verifyVin(req, res) {
   const user = await requireUser(req);
@@ -260,6 +296,7 @@ async function verifyVin(req, res) {
   const row = await db.prepare(`SELECT ${VOTER_FIELDS} FROM voters WHERE vin = ?`).get(vin);
   await logLookup(user, "single", 1, row ? 1 : 0);
   if (!row) throw new HttpError(404, STILL_SYNCING);
+  await recordVerifications(user, [row]);
   const { birth_year, ...voter } = row;
   voter.state = "Adamawa";
   if (birth_year) voter.birth_year = birth_year;
@@ -308,6 +345,7 @@ async function verifyVins(req, res) {
     return voter ? { vin, status: "found", ...place } : { vin, status: "syncing" };
   });
   if (REGISTER_ENABLED && valid.length) await logLookup(user, "bulk", valid.length, voters.size);
+  if (voters.size) await recordVerifications(user, [...voters.values()]);
   sendJson(res, 200, { results, message: REGISTER_ENABLED ? STILL_SYNCING : VERIFY_UNAVAILABLE, remaining });
 }
 
@@ -788,9 +826,11 @@ async function stats(req, res) {
     lga_agent: { label: "ward", column: "COALESCE(NULLIF(assign_ward, ''), NULLIF(ward, ''), 'Not set')" },
     ward_agent: { label: "polling unit", column: "COALESCE(NULLIF(assign_pu, ''), NULLIF(polling_unit, ''), 'Not set')" },
   }[user.role];
+  const seen = verificationScope(user);
   const [roleCounts, verified, breakdown, thisWeek, recent] = await Promise.all([
     db.prepare("SELECT role, COUNT(*) AS n FROM people WHERE path LIKE ? AND id != ? AND role != 'super_admin' GROUP BY role").all(scope, user.id),
-    count("SELECT COUNT(*) AS n FROM people WHERE path LIKE ? AND id != ? AND role != 'super_admin' AND verified = 1", scope, user.id),
+    // Different VINs verified against the register by this user and everyone under them.
+    count(`SELECT COUNT(DISTINCT v.vin) AS n FROM vin_verifications v JOIN people p ON p.id = v.person_id WHERE ${seen.sql}`, ...seen.args),
     level
       ? db.prepare(`SELECT ${level.column} AS name, COUNT(*) AS n FROM people WHERE path LIKE ? AND id != ? AND role != 'super_admin' GROUP BY 1 ORDER BY n DESC`).all(scope, user.id)
       : [],
@@ -991,6 +1031,7 @@ async function route(req, res) {
   if (method === "POST" && pathname === "/api/verify-vin") return verifyVin(req, res);
   if (method === "POST" && pathname === "/api/verify-vins") return verifyVins(req, res);
   if (method === "GET" && pathname === "/api/vin-lookups") return listLookups(req, res);
+  if (method === "GET" && pathname === "/api/verifications") return listVerifications(req, res);
 
   const personMatch = /^\/api\/people\/(\d+)(\/password)?$/.exec(pathname);
   if (personMatch) {
